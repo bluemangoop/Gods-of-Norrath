@@ -1,48 +1,61 @@
-name: Build and Release
+name: Build Patcher
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "master" ]
-
-env:
-  VERSION: 1.0.6
-  BUILD_CONFIGURATION: Release
-  SERVER_NAME: ${{ vars.SERVER_NAME == '' && 'Gods of Norrath' || vars.SERVER_NAME }}
-  FILE_NAME: ${{ vars.FILE_NAME == '' && 'gods_of_norrath' || vars.FILE_NAME }}
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      server_name:
+        description: 'Server Name'
+        required: false
+        default: 'My Server'
+      filelist_url:
+        description: 'File List URL'
+        required: false
+        default: 'https://example.com/filelist.yml'
+      patcher_url:
+        description: 'Patcher URL'
+        required: false
+        default: 'https://example.com'
+      file_name:
+        description: 'File Name'
+        required: false
+        default: 'eqemupatcher.exe'
+      version:
+        description: 'Version'
+        required: false
+        default: '1.0.0.0'
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v1.1.3
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
 
     - name: Restore NuGet packages
-      working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: cd "EQEmu Patcher" && nuget restore "EQEmu Patcher.sln"
+      run: nuget restore "EQEmu Patcher/EQEmu Patcher.sln"
 
-    - name: Build
-      working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: |
-        cd "EQEmu Patcher" && msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:VERSION="${{ env.VERSION }}.${{ github.run_number }}" /p:SERVER_NAME="${{env.SERVER_NAME}}" /p:FILE_NAME="${{env.FILE_NAME}}" "EQEmu Patcher.sln"
+    - name: Build (Debug)
+      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="Any CPU"
+      env:
+        SERVER_NAME: ${{ github.event.inputs.server_name || 'My Server' }}
+        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'https://example.com/filelist.yml' }}
+        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'https://example.com' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher.exe' }}
+        VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
-    - name: Rename output
-      run: |
-        move "EQEmu Patcher/EQEmu Patcher/bin/Release/eqemupatcher.exe" "EQEmu Patcher/EQEmu Patcher/bin/Release/${{env.FILE_NAME}}.exe"
-  
-    - name: Release
-      uses: "marvinpinto/action-automatic-releases@latest"
-      if: github.ref == 'refs/heads/master'
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "${{ env.VERSION }}.${{ github.run_number }}"
-        prerelease: false
-        title: "${{ env.VERSION }}.${{ github.run_number }}"
-        files: |
-          EQEmu Patcher/EQEmu Patcher/bin/Release/${{env.FILE_NAME}}.exe
+        name: eqemupatcher-debug
+        path: "EQEmu Patcher/EQEmu Patcher/bin/Debug/"
