@@ -48,14 +48,29 @@ jobs:
     - name: Build (Debug)
       run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="Any CPU"
       env:
-        SERVER_NAME: ${{ github.event.inputs.server_name || 'My Server' }}
-        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'https://example.com/filelist.yml' }}
-        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'https://example.com' }}
-        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher.exe' }}
+        SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
+        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
+        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher' }}
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
-    - name: Upload artifact
+    - name: Build (Release)
+      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Release /p:Platform="Any CPU"
+      env:
+        SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
+        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
+        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher' }}
+        VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
+
+    - name: Upload artifact (Debug)
       uses: actions/upload-artifact@v4
       with:
         name: eqemupatcher-debug
         path: "EQEmu Patcher/EQEmu Patcher/bin/Debug/"
+
+    - name: Upload artifact (Release)
+      uses: actions/upload-artifact@v4
+      with:
+        name: eqemupatcher-release
+        path: "EQEmu Patcher/EQEmu Patcher/bin/Release/"
