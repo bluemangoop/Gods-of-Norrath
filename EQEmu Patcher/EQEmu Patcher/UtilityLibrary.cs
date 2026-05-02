@@ -191,8 +191,8 @@ namespace EQEmu_Patcher
 
         /// <summary>
         /// Start EverQuest with DLL injection for live db_str lookups.
-        /// Creates the process in a suspended state, injects the proxy DLL,
-        /// then resumes the main thread.
+        /// Launches eqgame.exe normally, waits for it to initialize,
+        /// then injects the proxy DLL.
         /// </summary>
         public static System.Diagnostics.Process StartEverquest()
         {
@@ -212,35 +212,28 @@ namespace EQEmu_Patcher
                 return System.Diagnostics.Process.Start(startInfo);
             }
 
-            StatusLibrary.Log($"Injecting {DllToInject} into eqgame.exe...");
+            StatusLibrary.Log($"Starting eqgame.exe normally, then injecting {DllToInject}...");
 
-            // Use raw Win32 CreateProcess with CREATE_SUSPENDED to start eqgame.exe paused
-            STARTUPINFO si = new STARTUPINFO();
-            si.cb = System.Runtime.InteropServices.Marshal.SizeOf(typeof(STARTUPINFO));
-            PROCESS_INFORMATION pi;
-
-            bool created = CreateProcess(
-                eqPath + "\\eqgame.exe",
-                "patchme",
-                IntPtr.Zero,
-                IntPtr.Zero,
-                false,
-                CREATE_SUSPENDED,
-                IntPtr.Zero,
-                eqPath,
-                ref si,
-                out pi);
-
-            if (!created)
+            // Start eqgame.exe normally first
+            var eqStartInfo = new System.Diagnostics.ProcessStartInfo
             {
-                StatusLibrary.Log("Failed to start eqgame.exe in suspended state");
+                FileName = eqPath + "\\eqgame.exe",
+                Arguments = "patchme",
+                WorkingDirectory = eqPath,
+                UseShellExecute = false
+            };
+
+            var process = System.Diagnostics.Process.Start(eqStartInfo);
+            if (process == null)
+            {
+                StatusLibrary.Log("Failed to start eqgame.exe");
                 return null;
             }
 
-            // Wrap the process handle in a Process object for the caller
-            var process = System.Diagnostics.Process.GetProcessById(pi.dwProcessId);
+            // Wait a moment for the process to initialize before injecting
+            System.Threading.Thread.Sleep(2000);
 
-            // Inject the DLL while the process is suspended
+            // Inject the DLL
             try
             {
                 InjectDll(process, dllPath);
@@ -251,11 +244,6 @@ namespace EQEmu_Patcher
                 StatusLibrary.Log($"Failed to inject DLL: {ex.Message}");
                 StatusLibrary.Log("Game will start without live db_str proxy support.");
             }
-
-            // Resume the main thread to let the game start
-            ResumeThread(pi.hThread);
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
 
             return process;
         }
@@ -367,7 +355,7 @@ namespace EQEmu_Patcher
         #region Self-Update
 
         // GitHub repository for update checks
-        private static readonly string GitHubApiUrl = "https://api.github.com/repos/bluemangoop/eqemupatcher/releases/latest";
+        private static readonly string GitHubApiUrl = "https://api.github.com/repos/bluemangoop/eqemupatcher-test/releases/latest";
 
         /// <summary>
         /// Result of checking for patcher updates
