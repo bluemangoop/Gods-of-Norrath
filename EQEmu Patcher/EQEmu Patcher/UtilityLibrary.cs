@@ -14,6 +14,7 @@ using System.Web.Script.Serialization;
 using YamlDotNet.Core.Tokens;
 using System.Runtime.InteropServices.ComTypes;
 using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 namespace EQEmu_Patcher
 {
@@ -91,16 +92,246 @@ namespace EQEmu_Patcher
             }
         }
 
+        // DLL Injection imports
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesWritten);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CreateProcess(
+            string lpApplicationName,
+            string lpCommandLine,
+            IntPtr lpProcessAttributes,
+            IntPtr lpThreadAttributes,
+            bool bInheritHandles,
+            uint dwCreationFlags,
+            IntPtr lpEnvironment,
+            string lpCurrentDirectory,
+            ref STARTUPINFO lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint ResumeThread(IntPtr hThread);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct STARTUPINFO
+        {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX;
+            public int dwY;
+            public int dwXSize;
+            public int dwYSize;
+            public int dwXCountChars;
+            public int dwYCountChars;
+            public int dwFillAttribute;
+            public int dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public int dwProcessId;
+            public int dwThreadId;
+        }
+
+        // Process access flags
+        private const uint PROCESS_CREATE_THREAD = 0x0002;
+        private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+        private const uint PROCESS_VM_OPERATION = 0x0008;
+        private const uint PROCESS_VM_WRITE = 0x0020;
+        private const uint PROCESS_VM_READ = 0x0010;
+        private const uint PROCESS_SUSPEND_RESUME = 0x0800;
+
+        // Memory allocation flags
+        private const uint MEM_COMMIT = 0x00001000;
+        private const uint MEM_RESERVE = 0x00002000;
+        private const uint PAGE_READWRITE = 0x04;
+
+        // Creation flags
+        private const uint CREATE_SUSPENDED = 0x00000004;
+
+        // Wait constants
+        private const uint INFINITE = 0xFFFFFFFF;
+
+        /// <summary>
+        /// Name of the DLL to inject into eqgame.exe
+        /// </summary>
+        private static readonly string DllToInject = "db_str_proxy.dll";
+
+        /// <summary>
+        /// Start EverQuest with DLL injection for live db_str lookups.
+        /// Creates the process in a suspended state, injects the proxy DLL,
+        /// then resumes the main thread.
+        /// </summary>
         public static System.Diagnostics.Process StartEverquest()
         {
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = System.IO.Path.GetDirectoryName(Application.ExecutablePath) + "\\eqgame.exe",
-                Arguments = "patchme",
-                WorkingDirectory = System.IO.Path.GetDirectoryName(Application.ExecutablePath)
-            };
+            string eqPath = System.IO.Path.GetDirectoryName(Application.ExecutablePath);
+            string dllPath = eqPath + "\\" + DllToInject;
 
-            return System.Diagnostics.Process.Start(startInfo);
+            // Check if the DLL exists
+            if (!File.Exists(dllPath))
+            {
+                StatusLibrary.Log($"Warning: {DllToInject} not found at {dllPath}. Starting without injection.");
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = eqPath + "\\eqgame.exe",
+                    Arguments = "patchme",
+                    WorkingDirectory = eqPath
+                };
+                return System.Diagnostics.Process.Start(startInfo);
+            }
+
+            StatusLibrary.Log($"Injecting {DllToInject} into eqgame.exe...");
+
+            // Use raw Win32 CreateProcess with CREATE_SUSPENDED to start eqgame.exe paused
+            STARTUPINFO si = new STARTUPINFO();
+            si.cb = System.Runtime.InteropServices.Marshal.SizeOf(typeof(STARTUPINFO));
+            PROCESS_INFORMATION pi;
+
+            bool created = CreateProcess(
+                eqPath + "\\eqgame.exe",
+                "patchme",
+                IntPtr.Zero,
+                IntPtr.Zero,
+                false,
+                CREATE_SUSPENDED,
+                IntPtr.Zero,
+                eqPath,
+                ref si,
+                out pi);
+
+            if (!created)
+            {
+                StatusLibrary.Log("Failed to start eqgame.exe in suspended state");
+                return null;
+            }
+
+            // Wrap the process handle in a Process object for the caller
+            var process = System.Diagnostics.Process.GetProcessById(pi.dwProcessId);
+
+            // Inject the DLL while the process is suspended
+            try
+            {
+                InjectDll(process, dllPath);
+                StatusLibrary.Log($"Successfully injected {DllToInject}");
+            }
+            catch (Exception ex)
+            {
+                StatusLibrary.Log($"Failed to inject DLL: {ex.Message}");
+                StatusLibrary.Log("Game will start without live db_str proxy support.");
+            }
+
+            // Resume the main thread to let the game start
+            ResumeThread(pi.hThread);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+
+            return process;
+        }
+
+        /// <summary>
+        /// Inject a DLL into a running process using the classic CreateRemoteThread technique.
+        /// </summary>
+        private static void InjectDll(System.Diagnostics.Process process, string dllPath)
+        {
+            IntPtr hProcess = OpenProcess(
+                PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+                false, process.Id);
+
+            if (hProcess == IntPtr.Zero)
+            {
+                throw new Exception($"OpenProcess failed (PID: {process.Id}). Try running the patcher as Administrator.");
+            }
+
+            try
+            {
+                // Allocate memory in the remote process for the DLL path
+                uint dllPathSize = (uint)((dllPath.Length + 1) * Marshal.SizeOf(typeof(char)));
+                IntPtr remoteMemory = VirtualAllocEx(hProcess, IntPtr.Zero, dllPathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+                if (remoteMemory == IntPtr.Zero)
+                {
+                    throw new Exception("VirtualAllocEx failed - could not allocate memory in remote process");
+                }
+
+                // Write the DLL path to the allocated memory
+                byte[] dllPathBytes = Encoding.Unicode.GetBytes(dllPath);
+                uint bytesWritten;
+                bool success = WriteProcessMemory(hProcess, remoteMemory, dllPathBytes, dllPathSize, out bytesWritten);
+
+                if (!success || bytesWritten != dllPathSize)
+                {
+                    throw new Exception("WriteProcessMemory failed - could not write DLL path to remote process");
+                }
+
+                // Get the address of LoadLibraryW in kernel32.dll
+                IntPtr kernel32Base = GetModuleHandle("kernel32.dll");
+                if (kernel32Base == IntPtr.Zero)
+                {
+                    throw new Exception("GetModuleHandle(kernel32.dll) failed");
+                }
+
+                IntPtr loadLibraryAddr = GetProcAddress(kernel32Base, "LoadLibraryW");
+                if (loadLibraryAddr == IntPtr.Zero)
+                {
+                    throw new Exception("GetProcAddress(LoadLibraryW) failed");
+                }
+
+                // Create a remote thread that calls LoadLibraryW with our DLL path
+                IntPtr remoteThread = CreateRemoteThread(
+                    hProcess,
+                    IntPtr.Zero,
+                    0,
+                    loadLibraryAddr,
+                    remoteMemory,
+                    0, // 0 = run immediately
+                    IntPtr.Zero);
+
+                if (remoteThread == IntPtr.Zero)
+                {
+                    throw new Exception("CreateRemoteThread failed - could not create remote thread");
+                }
+
+                // Wait for the remote thread to complete (LoadLibrary to finish)
+                WaitForSingleObject(remoteThread, 10000); // 10 second timeout
+                CloseHandle(remoteThread);
+            }
+            finally
+            {
+                CloseHandle(hProcess);
+            }
         }
 
         //Pass the working directory (or later, you can pass another directory) and it returns a hash if the file is found

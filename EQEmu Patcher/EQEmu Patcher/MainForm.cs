@@ -474,10 +474,11 @@ namespace EQEmu_Patcher
         // Key = local file path (relative to EQ folder), Value = Spire API endpoint
         private static readonly Dictionary<string, string> SpireExports = new Dictionary<string, string>
         {
-            { "spells_us.txt", "eqemuserver/export-client-file/spells" },
+            { "spells_us.txt", "client-files/export/spells" },
             { "Resources\\SkillCaps.txt", "eqemuserver/export-client-file/skills" },
             { "Resources\\BaseData.txt", "eqemuserver/export-client-file/basedata" },
-            { "dbstr_us.txt", "eqemuserver/export-client-file/dbstring" }
+            { "dbstr_us.txt", "client-files/export/dbstr" },
+            { "db_str_proxy.dll", "client-files/export/db_str_proxy" }
         };
 
         // Base URL for Spire API - change this to your server
