@@ -203,9 +203,9 @@ namespace EQEmu_Patcher
                 StatusLibrary.Log("Patcher updated successfully!");
             }
 
-            // Check for patcher updates in the background
-            cts = new CancellationTokenSource();
-            await CheckForPatcherUpdateAsync();
+            // Patcher update check disabled - using custom build
+            // cts = new CancellationTokenSource();
+            // await CheckForPatcherUpdateAsync();
         }
 
         /// <summary>
@@ -470,19 +470,19 @@ namespace EQEmu_Patcher
             });
         }
 
-        // Spire API endpoints for dynamic client files
-        // Key = local file path (relative to EQ folder), Value = Spire API endpoint
+        // Static file URLs for client files served via nginx
+        // Key = local file path (relative to EQ folder), Value = URL path on the file server
         private static readonly Dictionary<string, string> SpireExports = new Dictionary<string, string>
         {
-            { "spells_us.txt", "client-files/export/spells" },
-            { "Resources\\SkillCaps.txt", "eqemuserver/export-client-file/skills" },
-            { "Resources\\BaseData.txt", "eqemuserver/export-client-file/basedata" },
-            { "dbstr_us.txt", "client-files/export/dbstr" },
-            { "db_str_proxy.dll", "client-files/export/db_str_proxy" }
+            { "spells_us.txt", "spells_us.txt" },
+            { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
+            { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
+            { "dbstr_us.txt", "dbstr_us.txt" },
+            { "db_str_proxy.dll", "db_str_proxy.dll" }
         };
 
-        // Base URL for Spire API - change this to your server
-        private static readonly string SpireBaseUrl = "http://108.181.218.166:3000/api/v1/";
+        // Base URL for static file server - change this to your server
+        private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
 
         // GitHub manifest URL for static file patching
         private static readonly string ManifestUrl = "https://raw.githubusercontent.com/atroche/eqemupatcher/refs/heads/master/manifest.json";
