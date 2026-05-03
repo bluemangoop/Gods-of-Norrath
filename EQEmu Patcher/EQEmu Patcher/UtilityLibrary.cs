@@ -118,6 +118,9 @@ namespace EQEmu_Patcher
         private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetDllDirectoryA(string lpPathName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CreateProcess(
             string lpApplicationName,
             string lpCommandLine,
@@ -192,7 +195,7 @@ namespace EQEmu_Patcher
         /// <summary>
         /// Start EverQuest with DLL injection for live db_str lookups.
         /// Launches eqgame.exe normally, waits for it to initialize,
-        /// then injects the proxy DLL.
+        /// then injects the proxy DLL with retry logic.
         /// </summary>
         public static System.Diagnostics.Process StartEverquest()
         {
@@ -233,16 +236,33 @@ namespace EQEmu_Patcher
             // Wait a moment for the process to initialize before injecting
             System.Threading.Thread.Sleep(2000);
 
-            // Inject the DLL
-            try
+            // Inject the DLL with retry logic (up to 3 attempts)
+            bool injected = false;
+            for (int attempt = 1; attempt <= 3; attempt++)
             {
-                InjectDll(process, dllPath);
-                StatusLibrary.Log($"Successfully injected {DllToInject}");
+                try
+                {
+                    StatusLibrary.Log($"Injection attempt {attempt}/3...");
+                    InjectDll(process, dllPath);
+                    StatusLibrary.Log($"Successfully injected {DllToInject}");
+                    injected = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    StatusLibrary.Log($"Injection attempt {attempt} failed: {ex.Message}");
+                    if (attempt < 3)
+                    {
+                        int delay = attempt * 2000; // 2s, 4s
+                        StatusLibrary.Log($"Retrying in {delay / 1000} seconds...");
+                        System.Threading.Thread.Sleep(delay);
+                    }
+                }
             }
-            catch (Exception ex)
+
+            if (!injected)
             {
-                StatusLibrary.Log($"Failed to inject DLL: {ex.Message}");
-                StatusLibrary.Log("Game will start without live db_str proxy support.");
+                StatusLibrary.Log("All injection attempts failed. Game will start without live db_str proxy support.");
             }
 
             return process;
@@ -250,6 +270,7 @@ namespace EQEmu_Patcher
 
         /// <summary>
         /// Inject a DLL into a running process using the classic CreateRemoteThread technique.
+        /// Uses SetDllDirectoryA first (like MacroQuest does) to ensure the DLL can find its dependencies.
         /// </summary>
         private static void InjectDll(System.Diagnostics.Process process, string dllPath)
         {
@@ -260,67 +281,132 @@ namespace EQEmu_Patcher
 
             if (hProcess == IntPtr.Zero)
             {
-                throw new Exception($"OpenProcess failed (PID: {process.Id}). Try running the patcher as Administrator.");
+                int error = Marshal.GetLastWin32Error();
+                throw new Exception($"OpenProcess failed (PID: {process.Id}, Error: {error}). Try running the patcher as Administrator.");
             }
 
             try
             {
-                // Allocate memory in the remote process for the DLL path
-                uint dllPathSize = (uint)((dllPath.Length + 1) * Marshal.SizeOf(typeof(char)));
-                IntPtr remoteMemory = VirtualAllocEx(hProcess, IntPtr.Zero, dllPathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+                // Get the directory containing the DLL (for SetDllDirectoryA)
+                string dllDir = System.IO.Path.GetDirectoryName(dllPath);
+
+                // Allocate memory in the remote process (1024 bytes is enough for both paths)
+                IntPtr remoteMemory = VirtualAllocEx(hProcess, IntPtr.Zero, 1024, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
                 if (remoteMemory == IntPtr.Zero)
                 {
-                    throw new Exception("VirtualAllocEx failed - could not allocate memory in remote process");
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Exception($"VirtualAllocEx failed (Error: {error})");
                 }
 
-                // Write the DLL path to the allocated memory
-                byte[] dllPathBytes = Encoding.Unicode.GetBytes(dllPath);
-                uint bytesWritten;
-                bool success = WriteProcessMemory(hProcess, remoteMemory, dllPathBytes, dllPathSize, out bytesWritten);
-
-                if (!success || bytesWritten != dllPathSize)
-                {
-                    throw new Exception("WriteProcessMemory failed - could not write DLL path to remote process");
-                }
-
-                // Get the address of LoadLibraryW in kernel32.dll
+                // Step 1: Call SetDllDirectoryA in the remote process to set the DLL search path
+                // This ensures the DLL can find its dependencies (like MacroQuest does)
                 IntPtr kernel32Base = GetModuleHandle("kernel32.dll");
                 if (kernel32Base == IntPtr.Zero)
                 {
                     throw new Exception("GetModuleHandle(kernel32.dll) failed");
                 }
 
+                IntPtr setDllDirectoryAddr = GetProcAddress(kernel32Base, "SetDllDirectoryA");
+                if (setDllDirectoryAddr == IntPtr.Zero)
+                {
+                    throw new Exception("GetProcAddress(SetDllDirectoryA) failed");
+                }
+
+                // Write the DLL directory path to remote memory
+                byte[] dllDirBytes = Encoding.ASCII.GetBytes(dllDir + "\0");
+                uint bytesWritten;
+                bool success = WriteProcessMemory(hProcess, remoteMemory, dllDirBytes, (uint)dllDirBytes.Length, out bytesWritten);
+
+                if (!success || bytesWritten != dllDirBytes.Length)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Exception($"WriteProcessMemory (for SetDllDirectoryA) failed (Error: {error})");
+                }
+
+                // Create remote thread to call SetDllDirectoryA(dllDir)
+                IntPtr remoteThread = CreateRemoteThread(
+                    hProcess,
+                    IntPtr.Zero,
+                    0,
+                    setDllDirectoryAddr,
+                    remoteMemory,
+                    0,
+                    IntPtr.Zero);
+
+                if (remoteThread == IntPtr.Zero)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Exception($"CreateRemoteThread (SetDllDirectoryA) failed (Error: {error})");
+                }
+
+                // Wait for SetDllDirectoryA to complete
+                uint waitResult = WaitForSingleObject(remoteThread, 10000);
+                if (waitResult == 0xFFFFFFFF) // WAIT_FAILED
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    CloseHandle(remoteThread);
+                    throw new Exception($"WaitForSingleObject (SetDllDirectoryA) failed (Error: {error})");
+                }
+                CloseHandle(remoteThread);
+
+                // Step 2: Write the DLL path to the allocated memory (reuse the same buffer)
+                byte[] dllPathBytes = Encoding.Unicode.GetBytes(dllPath + "\0");
+                success = WriteProcessMemory(hProcess, remoteMemory, dllPathBytes, (uint)dllPathBytes.Length, out bytesWritten);
+
+                if (!success || bytesWritten != dllPathBytes.Length)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Exception($"WriteProcessMemory (for LoadLibraryW) failed (Error: {error})");
+                }
+
+                // Step 3: Call LoadLibraryW in the remote process
                 IntPtr loadLibraryAddr = GetProcAddress(kernel32Base, "LoadLibraryW");
                 if (loadLibraryAddr == IntPtr.Zero)
                 {
                     throw new Exception("GetProcAddress(LoadLibraryW) failed");
                 }
 
-                // Create a remote thread that calls LoadLibraryW with our DLL path
-                IntPtr remoteThread = CreateRemoteThread(
+                remoteThread = CreateRemoteThread(
                     hProcess,
                     IntPtr.Zero,
                     0,
                     loadLibraryAddr,
                     remoteMemory,
-                    0, // 0 = run immediately
+                    0,
                     IntPtr.Zero);
 
                 if (remoteThread == IntPtr.Zero)
                 {
-                    throw new Exception("CreateRemoteThread failed - could not create remote thread");
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Exception($"CreateRemoteThread (LoadLibraryW) failed (Error: {error})");
                 }
 
-                // Wait for the remote thread to complete (LoadLibrary to finish)
-                WaitForSingleObject(remoteThread, 10000); // 10 second timeout
+                // Wait for LoadLibraryW to complete
+                waitResult = WaitForSingleObject(remoteThread, 30000); // 30 second timeout
+                if (waitResult == 0xFFFFFFFF) // WAIT_FAILED
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    CloseHandle(remoteThread);
+                    throw new Exception($"WaitForSingleObject (LoadLibraryW) failed (Error: {error})");
+                }
                 CloseHandle(remoteThread);
+
+                // Free the allocated memory
+                VirtualFreeEx(hProcess, remoteMemory, 0, MEM_RELEASE);
             }
             finally
             {
                 CloseHandle(hProcess);
             }
         }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint dwFreeType);
+
+        // Memory free flags
+        private const uint MEM_RELEASE = 0x00008000;
+
 
         //Pass the working directory (or later, you can pass another directory) and it returns a hash if the file is found
         public static string GetEverquestExecutableHash(string path)
