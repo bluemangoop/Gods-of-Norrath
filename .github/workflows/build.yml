@@ -1,4 +1,4 @@
-name: Build Patcher
+name: Build & Release Patcher
 
 on:
   push:
@@ -22,7 +22,7 @@ on:
       file_name:
         description: 'File Name'
         required: false
-        default: 'eqemupatcher.exe'
+        default: 'godsofnorrath-test.exe'
       version:
         description: 'Version'
         required: false
@@ -51,7 +51,7 @@ jobs:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
-        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath-test' }}
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
     - name: Build (Release)
@@ -60,17 +60,35 @@ jobs:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
-        FILE_NAME: ${{ github.event.inputs.file_name || 'eqemupatcher' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath-test' }}
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
     - name: Upload artifact (Debug)
       uses: actions/upload-artifact@v4
       with:
-        name: eqemupatcher-debug
+        name: godsofnorrath-test-debug
         path: "EQEmu Patcher/EQEmu Patcher/bin/Debug/"
 
     - name: Upload artifact (Release)
       uses: actions/upload-artifact@v4
       with:
-        name: eqemupatcher-release
+        name: godsofnorrath-test-release
         path: "EQEmu Patcher/EQEmu Patcher/bin/Release/"
+
+    # Only create a release on push to main (not on pull requests)
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ github.run_number }}
+        name: "v${{ github.run_number }}"
+        body: |
+          Auto-built from commit ${{ github.sha }}
+          
+          Built by GitHub Actions run #${{ github.run_number }}
+        files: |
+          EQEmu Patcher/EQEmu Patcher/bin/Release/godsofnorrath-test.exe
+        generate_release_notes: false
+        make_latest: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
