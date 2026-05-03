@@ -27,6 +27,11 @@
 #include <atomic>
 #include <cstdint>
 
+// SELFREG_E_CLASS is not defined in all mingw headers
+#ifndef SELFREG_E_CLASS
+#define SELFREG_E_CLASS 0x80040201
+#endif
+
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "psapi.lib")

@@ -1,6 +1,6 @@
 EXPORTS
-  DirectInput8Create
-  DllCanUnloadNow
-  DllGetClassObject
-  DllRegisterServer
-  DllUnregisterServer
+  DirectInput8Create=ForwardDirectInput8Create
+  DllCanUnloadNow=ForwardDllCanUnloadNow
+  DllGetClassObject=ForwardDllGetClassObject
+  DllRegisterServer=ForwardDllRegisterServer
+  DllUnregisterServer=ForwardDllUnregisterServer
