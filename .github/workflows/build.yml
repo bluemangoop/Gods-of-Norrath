@@ -49,7 +49,7 @@ jobs:
       run: nuget restore "EQEmu Patcher/EQEmu Patcher.sln"
 
     - name: Build (Debug)
-      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="Any CPU"
+      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="x86"
       env:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
@@ -58,7 +58,7 @@ jobs:
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
     - name: Build (Release)
-      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Release /p:Platform="Any CPU"
+      run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Release /p:Platform="x86"
       env:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
