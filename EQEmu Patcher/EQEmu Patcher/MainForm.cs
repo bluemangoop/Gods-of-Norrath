@@ -478,7 +478,8 @@ namespace EQEmu_Patcher
             { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
             { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
             { "dbstr_us.txt", "dbstr_us.txt" },
-            { "db_str_proxy.dll", "db_str_proxy.dll" }
+            { "dinput8.dll", "dinput8.dll" }
+
         };
 
         // Base URL for static file server - change this to your server
