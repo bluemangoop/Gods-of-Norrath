@@ -1,10 +1,7 @@
-// dllmain.cpp : EQ Client DLL - dinput8.dll Proxy with DB String Proxy & Chat Commands
+// godsofnorrath.cpp : EQ Client Hook DLL - Injected by patcher
 //
-// This DLL acts as a dinput8.dll proxy that loads automatically when eqgame.exe
-// starts (no injection needed). It forwards all 5 real dinput8 exports to the
-// system DLL in SysWOW64 while installing our hooks.
-//
-// Hooks:
+// This DLL is injected into eqgame.exe by the EQEmu Patcher after the game
+// launches. It installs hooks for:
 //   - CDBStr::GetString - redirects string lookups to server-side DbStrProxy via TCP
 //   - CEverQuest::InterpretCmd - intercepts chat commands like #helloworld and #reload
 //
@@ -13,6 +10,8 @@
 //   CEverQuest__dsp_chat_x     = 0x51F1A0
 //   CDBStr__GetString_x        = 0x4866C0
 //   pinstCDBStr_x              = 0xD1F380
+//   pinstLocalPlayer_x         = 0xDD2630
+//   pinstCEverQuest_x          = 0xE67CCC
 
 // winsock2.h MUST be included before windows.h
 #include <winsock2.h>
@@ -26,102 +25,34 @@
 #include <unordered_map>
 #include <atomic>
 #include <cstdint>
-
-// SELFREG_E_CLASS is not defined in all mingw headers
-#ifndef SELFREG_E_CLASS
-#define SELFREG_E_CLASS 0x80040201
-#endif
-
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "wininet.lib")
-#pragma comment(lib, "psapi.lib")
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
 
 // ============================================================================
-// dinput8.dll Proxy Forwarding
+// Debug Logging
 // ============================================================================
-//
-// eqgame.exe loads dinput8.dll at startup (DirectInput). Windows DLL search
-// order checks the app directory before system directories, so by placing our
-// dinput8.dll in the EQ directory, Windows loads ours first.
-//
-// We load the real C:\Windows\SysWOW64\dinput8.dll and forward all 5 exports.
 
-// Handle to the real dinput8.dll from SysWOW64
-HMODULE g_real_dinput8 = NULL;
+void DebugLog(const char* format, ...) {
+	char buffer[4096];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(buffer, sizeof(buffer), format, args);
+	va_end(args);
 
-// Forwarding wrapper functions
-extern "C" __declspec(dllexport) HRESULT WINAPI ForwardDirectInput8Create(
-    HINSTANCE hinst, DWORD dwVersion, REFIID riidltf, LPVOID *ppvOut, LPUNKNOWN punkOuter)
-{
-    if (!g_real_dinput8) {
-        return E_FAIL;
-    }
-    typedef HRESULT (WINAPI *RealFunc)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
-    RealFunc real = (RealFunc)GetProcAddress(g_real_dinput8, "DirectInput8Create");
-    if (!real) return E_FAIL;
-    return real(hinst, dwVersion, riidltf, ppvOut, punkOuter);
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	char timestamp[64];
+	snprintf(timestamp, sizeof(timestamp), "[%02d:%02d:%02d.%03d]",
+		st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+	FILE* f = fopen("eqhook_debug.log", "a");
+	if (f) {
+		fprintf(f, "%s %s\n", timestamp, buffer);
+		fclose(f);
+	}
 }
-
-extern "C" __declspec(dllexport) HRESULT WINAPI ForwardDllCanUnloadNow()
-{
-    if (!g_real_dinput8) {
-        return S_FALSE;
-    }
-    typedef HRESULT (WINAPI *RealFunc)();
-    RealFunc real = (RealFunc)GetProcAddress(g_real_dinput8, "DllCanUnloadNow");
-    if (!real) return S_FALSE;
-    return real();
-}
-
-extern "C" __declspec(dllexport) HRESULT WINAPI ForwardDllGetClassObject(
-    REFCLSID rclsid, REFIID riid, LPVOID *ppv)
-{
-    if (!g_real_dinput8) {
-        return CLASS_E_CLASSNOTAVAILABLE;
-    }
-    typedef HRESULT (WINAPI *RealFunc)(REFCLSID, REFIID, LPVOID*);
-    RealFunc real = (RealFunc)GetProcAddress(g_real_dinput8, "DllGetClassObject");
-    if (!real) return CLASS_E_CLASSNOTAVAILABLE;
-    return real(rclsid, riid, ppv);
-}
-
-extern "C" __declspec(dllexport) HRESULT WINAPI ForwardDllRegisterServer()
-{
-    if (!g_real_dinput8) {
-        return SELFREG_E_CLASS;
-    }
-    typedef HRESULT (WINAPI *RealFunc)();
-    RealFunc real = (RealFunc)GetProcAddress(g_real_dinput8, "DllRegisterServer");
-    if (!real) return SELFREG_E_CLASS;
-    return real();
-}
-
-extern "C" __declspec(dllexport) HRESULT WINAPI ForwardDllUnregisterServer()
-{
-    if (!g_real_dinput8) {
-        return SELFREG_E_CLASS;
-    }
-    typedef HRESULT (WINAPI *RealFunc)();
-    RealFunc real = (RealFunc)GetProcAddress(g_real_dinput8, "DllUnregisterServer");
-    if (!real) return SELFREG_E_CLASS;
-    return real();
-}
-
-// Load the real dinput8.dll from SysWOW64
-bool LoadRealDinput8()
-{
-    if (g_real_dinput8) {
-        return true;
-    }
-
-    g_real_dinput8 = LoadLibraryA("C:\\Windows\\SysWOW64\\dinput8.dll");
-    if (!g_real_dinput8) {
-        // Try alternative paths
-        g_real_dinput8 = LoadLibraryA("C:\\Windows\\System32\\dinput8.dll");
-    }
-    return (g_real_dinput8 != NULL);
-}
-
 
 // ============================================================================
 // Configuration
@@ -163,11 +94,11 @@ public:
 
 		m_sock = socket(AF_INET, SOCK_STREAM, 0);
 		if (m_sock == INVALID_SOCKET) {
+			DebugLog("DbStrTcpClient::Connect: socket() failed with error %lu", WSAGetLastError());
 			return false;
 		}
 
-		// Set timeout
-		int timeout = 3000; // 3 seconds
+		int timeout = 3000;
 		setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 		setsockopt(m_sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 
@@ -177,12 +108,15 @@ public:
 		inet_pton(AF_INET, PROXY_HOST, &server_addr.sin_addr);
 
 		if (connect(m_sock, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+			DebugLog("DbStrTcpClient::Connect: connect() to %s:%d failed with error %lu",
+				PROXY_HOST, PROXY_PORT, WSAGetLastError());
 			closesocket(m_sock);
 			m_sock = INVALID_SOCKET;
 			return false;
 		}
 
 		m_connected = true;
+		DebugLog("DbStrTcpClient::Connect: Connected to %s:%d", PROXY_HOST, PROXY_PORT);
 		return true;
 	}
 
@@ -202,6 +136,7 @@ public:
 		std::string req = request + "\n";
 		int sent = send(m_sock, req.c_str(), (int)req.length(), 0);
 		if (sent == SOCKET_ERROR) {
+			DebugLog("DbStrTcpClient::SendRequest: send() failed with error %lu", WSAGetLastError());
 			Disconnect();
 			return false;
 		}
@@ -214,6 +149,7 @@ public:
 		char buffer[4096];
 		int received = recv(m_sock, buffer, sizeof(buffer) - 1, 0);
 		if (received <= 0) {
+			DebugLog("DbStrTcpClient::ReceiveResponse: recv() failed with error %lu", WSAGetLastError());
 			Disconnect();
 			return false;
 		}
@@ -221,7 +157,6 @@ public:
 		buffer[received] = '\0';
 		response = buffer;
 
-		// Remove trailing newline if present
 		if (!response.empty() && response.back() == '\n') {
 			response.pop_back();
 		}
@@ -239,7 +174,6 @@ public:
 		std::string result;
 		std::string response;
 
-		// Try up to 2 times
 		for (int attempt = 0; attempt < 2; attempt++) {
 			if (!SendRequest(request)) {
 				continue;
@@ -249,9 +183,7 @@ public:
 				continue;
 			}
 
-			// Parse response: "OK|<value>" or "NOT_FOUND|<id>|<type>"
 			if (response.substr(0, 3) == "OK|") {
-				// Unescape the value
 				std::string value = response.substr(3);
 				std::string unescaped;
 				unescaped.reserve(value.size());
@@ -341,28 +273,59 @@ std::atomic<bool> g_initialized(false);
 std::atomic<bool> g_hook_installed(false);
 std::atomic<bool> g_cmd_hook_installed(false);
 
-// Saved original bytes for unhooking
 BYTE g_original_bytes[5] = {0};
 BYTE g_cmd_original_bytes[5] = {0};
 uintptr_t g_target_func_addr = 0;
 uintptr_t g_cmd_func_addr = 0;
 
+void* g_get_db_str_trampoline = nullptr;
+void* g_interpret_cmd_trampoline = nullptr;
+
+// ============================================================================
+// Trampoline Helper
+// ============================================================================
+
+void* CreateTrampoline(BYTE* original_bytes, uintptr_t original_addr) {
+	void* trampoline = VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	if (!trampoline) {
+		DebugLog("CreateTrampoline: VirtualAlloc failed with error %lu", GetLastError());
+		return nullptr;
+	}
+
+	BYTE* code = (BYTE*)trampoline;
+	size_t offset = 0;
+
+	memcpy(code + offset, original_bytes, 5);
+	offset += 5;
+
+	uintptr_t return_addr = original_addr + 5;
+	code[offset++] = 0xFF;
+	code[offset++] = 0x25;
+	code[offset++] = 0x00;
+	code[offset++] = 0x00;
+	code[offset++] = 0x00;
+	code[offset++] = 0x00;
+	memcpy(code + offset, &return_addr, sizeof(return_addr));
+	offset += 4;
+
+	DebugLog("CreateTrampoline: Created at 0x%p, %zu bytes", trampoline, offset);
+	return trampoline;
+}
+
 // ============================================================================
 // CDBStr::GetString Hook
 // ============================================================================
 
-// Original function type (__thiscall)
 typedef const char* (__thiscall* GetDbStrFunc)(void* this_ptr, int id, int type, bool* found);
-
-// Saved original function pointer
 GetDbStrFunc g_original_get_db_str = nullptr;
 
-// Buffer for our cached string results (must persist across calls)
+#ifdef __MINGW32__
+__thread char g_thread_local_buffer[4096];
+#else
 __declspec(thread) char g_thread_local_buffer[4096];
+#endif
 
-// Our hook function
 const char* __fastcall HookedGetDbStr(void* this_ptr, int /*unused_edx*/, int id, int type, bool* found) {
-	// First, try the cache
 	std::string cached = g_cache.Get(id, type);
 	if (!cached.empty()) {
 		if (found) *found = true;
@@ -370,7 +333,6 @@ const char* __fastcall HookedGetDbStr(void* this_ptr, int /*unused_edx*/, int id
 		return g_thread_local_buffer;
 	}
 
-	// Try the server proxy
 	std::string server_result = g_tcp_client.LookupString(id, type);
 	if (!server_result.empty()) {
 		g_cache.Set(id, type, server_result);
@@ -379,7 +341,6 @@ const char* __fastcall HookedGetDbStr(void* this_ptr, int /*unused_edx*/, int id
 		return g_thread_local_buffer;
 	}
 
-	// Fall back to original function
 	if (g_original_get_db_str) {
 		const char* result = g_original_get_db_str(this_ptr, id, type, found);
 		if (result && result[0] != '\0') {
@@ -393,33 +354,17 @@ const char* __fastcall HookedGetDbStr(void* this_ptr, int /*unused_edx*/, int id
 }
 
 // ============================================================================
-// CEverQuest::InterpretCmd Hook (for chat commands)
+// CEverQuest::InterpretCmd Hook
 // ============================================================================
-//
-// CEverQuest::InterpretCmd is the function that processes all /commands
-// and chat input. By hooking it, we can intercept #commands before they
-// are sent to the server.
-//
-// Function signature (__thiscall):
-//   void InterpretCmd(PlayerClient* pChar, const char* szFullLine)
-//
-// Offset: 0x51FCE0 (from MacroQuest)
 
-// CEverQuest::dsp_chat function for displaying messages in the EQ chat window
-// void __thiscall dsp_chat(const char* Text, int Color)
-// Offset: 0x51F1A0
 typedef void (__thiscall* DspChatFunc)(void* this_ptr, const char* text, int color);
 DspChatFunc g_dsp_chat = nullptr;
 
-// Original InterpretCmd function type
 typedef void (__thiscall* InterpretCmdFunc)(void* this_ptr, void* pChar, const char* szFullLine);
 InterpretCmdFunc g_original_interpret_cmd = nullptr;
 
-// Get the EQ client's player name from the local player structure
-// pinstLocalPlayer = 0xDD2630 (pointer to SPAWNINFO)
 const uintptr_t pinstLocalPlayer_Offset = 0xDD2630;
 
-// Helper: Get the player name from the EQ client
 std::string GetPlayerName() {
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
 	if (!eqgame) return "Unknown";
@@ -429,31 +374,34 @@ std::string GetPlayerName() {
 	void** pLocalPlayer = (void**)pLocalPlayerPtr;
 	if (!pLocalPlayer || !*pLocalPlayer) return "Unknown";
 
-	// SPAWNINFO structure: at offset 0x14 is the name (char[64])
 	char* name = (char*)(*pLocalPlayer) + 0x14;
 	return std::string(name);
 }
 
-// Helper: Display a message in the EQ chat window using dsp_chat
 void DisplayChatMessage(const char* message) {
-	if (!g_dsp_chat) return;
+	if (!g_dsp_chat) {
+		DebugLog("DisplayChatMessage: g_dsp_chat is NULL, can't display: %s", message);
+		return;
+	}
 
-	// Get the CEverQuest instance pointer
-	// pinstCEverQuest = 0xE67CCC
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
-	if (!eqgame) return;
+	if (!eqgame) {
+		DebugLog("DisplayChatMessage: eqgame.exe module not found");
+		return;
+	}
 
 	uintptr_t base = (uintptr_t)eqgame;
 	uintptr_t pEverQuestPtr = base + 0xE67CCC;
 	void** pEverQuest = (void**)pEverQuestPtr;
-	if (!pEverQuest || !*pEverQuest) return;
+	if (!pEverQuest || !*pEverQuest) {
+		DebugLog("DisplayChatMessage: pEverQuest is NULL (offset 0xE67CCC)");
+		return;
+	}
 
-	// Color 15 = yellow (chat color), 0 = white, 230 = red, 231 = green
+	DebugLog("DisplayChatMessage: Calling dsp_chat with: %s", message);
 	g_dsp_chat(*pEverQuest, message, 15);
 }
 
-// Download a file from a URL and save it to a local path
-// Returns true on success
 bool DownloadFileToDisk(const char* url, const char* localPath) {
 	bool success = false;
 	HINTERNET hInternet = InternetOpenA(
@@ -462,7 +410,10 @@ bool DownloadFileToDisk(const char* url, const char* localPath) {
 		NULL, NULL, 0
 	);
 
-	if (!hInternet) return false;
+	if (!hInternet) {
+		DebugLog("DownloadFileToDisk: InternetOpenA failed with error %lu", GetLastError());
+		return false;
+	}
 
 	HINTERNET hUrl = InternetOpenUrlA(
 		hInternet,
@@ -472,58 +423,68 @@ bool DownloadFileToDisk(const char* url, const char* localPath) {
 		0
 	);
 
-	if (hUrl) {
-		HANDLE hFile = CreateFileA(
-			localPath,
-			GENERIC_WRITE,
-			0,
-			NULL,
-			CREATE_ALWAYS,
-			FILE_ATTRIBUTE_NORMAL,
-			NULL
-		);
-
-		if (hFile != INVALID_HANDLE_VALUE) {
-			char buffer[8192];
-			DWORD bytesRead;
-			DWORD totalBytes = 0;
-
-			while (InternetReadFile(hUrl, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
-				DWORD bytesWritten;
-				WriteFile(hFile, buffer, bytesRead, &bytesWritten, NULL);
-				totalBytes += bytesWritten;
-			}
-
-			CloseHandle(hFile);
-
-			if (totalBytes > 0) {
-				success = true;
-			}
-		}
-
-		InternetCloseHandle(hUrl);
+	if (!hUrl) {
+		DebugLog("DownloadFileToDisk: InternetOpenUrlA failed for %s with error %lu", url, GetLastError());
+		InternetCloseHandle(hInternet);
+		return false;
 	}
 
+	HANDLE hFile = CreateFileA(
+		localPath,
+		GENERIC_WRITE,
+		0,
+		NULL,
+		CREATE_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		DebugLog("DownloadFileToDisk: CreateFileA failed for %s with error %lu", localPath, GetLastError());
+		InternetCloseHandle(hUrl);
+		InternetCloseHandle(hInternet);
+		return false;
+	}
+
+	char buffer[8192];
+	DWORD bytesRead;
+	DWORD totalBytes = 0;
+
+	while (InternetReadFile(hUrl, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
+		DWORD bytesWritten;
+		WriteFile(hFile, buffer, bytesRead, &bytesWritten, NULL);
+		totalBytes += bytesWritten;
+	}
+
+	CloseHandle(hFile);
+	InternetCloseHandle(hUrl);
 	InternetCloseHandle(hInternet);
+
+	DebugLog("DownloadFileToDisk: Downloaded %lu bytes to %s", totalBytes, localPath);
+
+	if (totalBytes > 0) {
+		success = true;
+	}
+
 	return success;
 }
 
-// Our hooked InterpretCmd function
 void __fastcall HookedInterpretCmd(void* this_ptr, int /*unused_edx*/, void* pChar, const char* szFullLine) {
 	if (szFullLine) {
-		// Check for #helloworld command
+		DebugLog("HookedInterpretCmd: Received command: '%s'", szFullLine);
+
 		if (strcmp(szFullLine, "#helloworld") == 0) {
 			std::string playerName = GetPlayerName();
 			std::string msg = "Hello, " + playerName + ".";
+			DebugLog("HookedInterpretCmd: #helloworld triggered for player '%s'", playerName.c_str());
 			DisplayChatMessage(msg.c_str());
-			return; // Command consumed, don't pass to original
+			return;
 		}
 
-		// Check for #reload aa_data global command
 		if (strcmp(szFullLine, "#reload aa_data global") == 0) {
+			DebugLog("HookedInterpretCmd: #reload aa_data global triggered");
 			DisplayChatMessage("Reloading dbstr_us.txt from server...");
 
-			// Get the EQ directory path from the module path
 			char eqPath[MAX_PATH];
 			HMODULE eqgame = GetModuleHandleA("eqgame.exe");
 			if (eqgame) {
@@ -538,24 +499,18 @@ void __fastcall HookedInterpretCmd(void* this_ptr, int /*unused_edx*/, void* pCh
 
 			std::string dbstrPath = std::string(eqPath) + "dbstr_us.txt";
 
-			// Download the latest dbstr_us.txt from the server
 			if (DownloadFileToDisk(DBSTR_DOWNLOAD_URL, dbstrPath.c_str())) {
-				// Clear our local cache so the next lookup goes to the server
 				g_cache.Clear();
-
-				// Also send RELOAD to the server proxy to refresh its cache
 				g_tcp_client.SendRequest("RELOAD");
-
 				DisplayChatMessage("dbstr_us.txt reloaded successfully from server.");
 			} else {
 				DisplayChatMessage("ERROR: Failed to download dbstr_us.txt from server.");
 			}
 
-			return; // Command consumed
+			return;
 		}
 	}
 
-	// Pass through to original handler for all other input
 	if (g_original_interpret_cmd) {
 		g_original_interpret_cmd(this_ptr, pChar, szFullLine);
 	}
@@ -576,63 +531,82 @@ bool UnprotectMemory(uintptr_t addr, size_t size) {
 
 bool InstallGetDbStrHook() {
 	if (g_hook_installed.exchange(true)) {
+		DebugLog("InstallGetDbStrHook: Already installed");
 		return true;
 	}
 
-	// Get the base address of eqgame.exe
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
 	if (!eqgame) {
 		eqgame = GetModuleHandleA(NULL);
 	}
 	if (!eqgame) {
-		return false;
-	}
-
-	// Calculate the target function address
-	uintptr_t base_addr = (uintptr_t)eqgame;
-	g_target_func_addr = base_addr + CDBStr_GetString_Offset;
-
-	// Save the original function pointer
-	g_original_get_db_str = (GetDbStrFunc)g_target_func_addr;
-
-	// Save original bytes for unhooking
-	memcpy(g_original_bytes, (void*)g_target_func_addr, 5);
-
-	// Calculate the relative jump offset
-	uintptr_t hook_func_addr = (uintptr_t)&HookedGetDbStr;
-	int32_t rel_offset = (int32_t)(hook_func_addr - (g_target_func_addr + 5));
-
-	// Build the JMP instruction
-	BYTE jmp_code[5];
-	jmp_code[0] = 0xE9; // JMP rel32
-	memcpy(&jmp_code[1], &rel_offset, sizeof(rel_offset));
-
-	// Make the target memory writable
-	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_target_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DebugLog("InstallGetDbStrHook: FAILED - cannot get eqgame.exe module handle");
 		g_hook_installed = false;
 		return false;
 	}
 
-	// Write the JMP instruction
-	memcpy((void*)g_target_func_addr, jmp_code, 5);
+	uintptr_t base_addr = (uintptr_t)eqgame;
+	g_target_func_addr = base_addr + CDBStr_GetString_Offset;
 
-	// Restore protection
-	VirtualProtect((LPVOID)g_target_func_addr, 5, old_protect, &old_protect);
+	DebugLog("InstallGetDbStrHook: eqgame base = 0x%p, target = 0x%p (offset 0x%X)",
+		(void*)base_addr, (void*)g_target_func_addr, CDBStr_GetString_Offset);
+
+	BYTE first_bytes[10];
+	memcpy(first_bytes, (void*)g_target_func_addr, 5);
+	DebugLog("InstallGetDbStrHook: First 5 bytes at target: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
+
+	memcpy(g_original_bytes, (void*)g_target_func_addr, 5);
+
+	g_get_db_str_trampoline = CreateTrampoline(g_original_bytes, g_target_func_addr);
+	if (g_get_db_str_trampoline) {
+		g_original_get_db_str = (GetDbStrFunc)g_get_db_str_trampoline;
+		DebugLog("InstallGetDbStrHook: Trampoline at 0x%p", g_get_db_str_trampoline);
+	} else {
+		g_original_get_db_str = (GetDbStrFunc)g_target_func_addr;
+		DebugLog("InstallGetDbStrHook: WARNING - no trampoline, using direct address");
+	}
+
+	uintptr_t hook_func_addr = (uintptr_t)&HookedGetDbStr;
+	DebugLog("InstallGetDbStrHook: Hook function at 0x%p", (void*)hook_func_addr);
+
+	BYTE jmp_code[10];
+	jmp_code[0] = 0xFF;
+	jmp_code[1] = 0x25;
+	jmp_code[2] = 0x00;
+	jmp_code[3] = 0x00;
+	jmp_code[4] = 0x00;
+	jmp_code[5] = 0x00;
+	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+
+	DWORD old_protect;
+	if (!VirtualProtect((LPVOID)g_target_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DWORD err = GetLastError();
+		DebugLog("InstallGetDbStrHook: VirtualProtect failed with error %lu", err);
+		g_hook_installed = false;
+		return false;
+	}
+
+	memcpy((void*)g_target_func_addr, jmp_code, 10);
+	VirtualProtect((LPVOID)g_target_func_addr, 10, old_protect, &old_protect);
+
+	memcpy(first_bytes, (void*)g_target_func_addr, 10);
+	DebugLog("InstallGetDbStrHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
+		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
 
 	return true;
 }
 
 void UninstallGetDbStrHook() {
-	if (!g_hook_installed) {
-		return;
-	}
+	if (!g_hook_installed) return;
 
 	if (g_target_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_target_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_target_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_target_func_addr, g_original_bytes, 5);
-		VirtualProtect((LPVOID)g_target_func_addr, 5, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_target_func_addr, 10, old_protect, &old_protect);
+		DebugLog("UninstallGetDbStrHook: Hook removed");
 	}
 
 	g_hook_installed = false;
@@ -640,68 +614,85 @@ void UninstallGetDbStrHook() {
 
 bool InstallCmdHook() {
 	if (g_cmd_hook_installed.exchange(true)) {
+		DebugLog("InstallCmdHook: Already installed");
 		return true;
 	}
 
-	// Get the base address of eqgame.exe
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
 	if (!eqgame) {
 		eqgame = GetModuleHandleA(NULL);
 	}
 	if (!eqgame) {
+		DebugLog("InstallCmdHook: FAILED - cannot get eqgame.exe module handle");
 		g_cmd_hook_installed = false;
 		return false;
 	}
 
 	uintptr_t base_addr = (uintptr_t)eqgame;
 
-	// Set up the dsp_chat function pointer for displaying messages
 	g_dsp_chat = (DspChatFunc)(base_addr + CEverQuest_dsp_chat_Offset);
+	DebugLog("InstallCmdHook: dsp_chat at 0x%p", (void*)g_dsp_chat);
 
-	// Calculate the target function address for InterpretCmd
 	g_cmd_func_addr = base_addr + CEverQuest_InterpretCmd_Offset;
+	DebugLog("InstallCmdHook: InterpretCmd at 0x%p (offset 0x%X)",
+		(void*)g_cmd_func_addr, CEverQuest_InterpretCmd_Offset);
 
-	// Save the original function pointer
-	g_original_interpret_cmd = (InterpretCmdFunc)g_cmd_func_addr;
+	BYTE first_bytes[10];
+	memcpy(first_bytes, (void*)g_cmd_func_addr, 5);
+	DebugLog("InstallCmdHook: First 5 bytes at InterpretCmd: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
-	// Save original bytes for unhooking
 	memcpy(g_cmd_original_bytes, (void*)g_cmd_func_addr, 5);
 
-	// Calculate the relative jump offset
+	g_interpret_cmd_trampoline = CreateTrampoline(g_cmd_original_bytes, g_cmd_func_addr);
+	if (g_interpret_cmd_trampoline) {
+		g_original_interpret_cmd = (InterpretCmdFunc)g_interpret_cmd_trampoline;
+		DebugLog("InstallCmdHook: Trampoline at 0x%p", g_interpret_cmd_trampoline);
+	} else {
+		g_original_interpret_cmd = (InterpretCmdFunc)g_cmd_func_addr;
+		DebugLog("InstallCmdHook: WARNING - no trampoline, using direct address");
+	}
+
 	uintptr_t hook_func_addr = (uintptr_t)&HookedInterpretCmd;
-	int32_t rel_offset = (int32_t)(hook_func_addr - (g_cmd_func_addr + 5));
+	DebugLog("InstallCmdHook: Hook function at 0x%p", (void*)hook_func_addr);
 
-	// Build the JMP instruction
-	BYTE jmp_code[5];
-	jmp_code[0] = 0xE9; // JMP rel32
-	memcpy(&jmp_code[1], &rel_offset, sizeof(rel_offset));
+	BYTE jmp_code[10];
+	jmp_code[0] = 0xFF;
+	jmp_code[1] = 0x25;
+	jmp_code[2] = 0x00;
+	jmp_code[3] = 0x00;
+	jmp_code[4] = 0x00;
+	jmp_code[5] = 0x00;
+	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
 
-	// Make the target memory writable
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_cmd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_cmd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DWORD err = GetLastError();
+		DebugLog("InstallCmdHook: VirtualProtect failed with error %lu", err);
 		g_cmd_hook_installed = false;
 		return false;
 	}
 
-	// Write the JMP instruction
-	memcpy((void*)g_cmd_func_addr, jmp_code, 5);
+	memcpy((void*)g_cmd_func_addr, jmp_code, 10);
+	VirtualProtect((LPVOID)g_cmd_func_addr, 10, old_protect, &old_protect);
 
-	// Restore protection
-	VirtualProtect((LPVOID)g_cmd_func_addr, 5, old_protect, &old_protect);
+	memcpy(first_bytes, (void*)g_cmd_func_addr, 10);
+	DebugLog("InstallCmdHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
+		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
 
 	return true;
 }
 
 void UninstallCmdHook() {
-	if (!g_cmd_hook_installed) {
-		return;
-	}
+	if (!g_cmd_hook_installed) return;
 
 	if (g_cmd_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_cmd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_cmd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_cmd_func_addr, g_cmd_original_bytes, 5);
-		VirtualProtect((LPVOID)g_cmd_func_addr, 5, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_cmd_func_addr, 10, old_protect, &old_protect);
+		DebugLog("UninstallCmdHook: Hook removed");
 	}
 
 	g_cmd_hook_installed = false;
@@ -716,25 +707,33 @@ void InitializeHooks() {
 		return;
 	}
 
-	// Connect to the server proxy
+	DebugLog("InitializeHooks: Starting initialization...");
+
+	DebugLog("InitializeHooks: Connecting to TCP proxy...");
 	g_tcp_client.Connect();
 
-	// Install the hook on CDBStr::GetString
+	DebugLog("InitializeHooks: Installing CDBStr::GetString hook...");
 	if (!InstallGetDbStrHook()) {
+		DebugLog("InitializeHooks: FAILED to install CDBStr::GetString hook!");
 		g_initialized = false;
 		return;
 	}
+	DebugLog("InitializeHooks: CDBStr::GetString hook installed successfully");
 
-	// Install the chat command hook on CEverQuest::InterpretCmd
+	DebugLog("InitializeHooks: Installing InterpretCmd hook...");
 	if (!InstallCmdHook()) {
-		// Non-fatal - commands won't work but string lookups will
+		DebugLog("InitializeHooks: FAILED to install InterpretCmd hook (non-fatal)");
+	} else {
+		DebugLog("InitializeHooks: InterpretCmd hook installed successfully");
 	}
+
+	DebugLog("InitializeHooks: Initialization complete!");
 }
 
-// Thread function for delayed initialization
 DWORD WINAPI InitThreadProc(LPVOID lpParam) {
-	// Give the process time to fully initialize
-	Sleep(5000);
+	DebugLog("InitThreadProc: Started, waiting 2 seconds...");
+	Sleep(2000);
+	DebugLog("InitThreadProc: Delay complete, initializing hooks...");
 	InitializeHooks();
 	return 0;
 }
@@ -743,29 +742,41 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 	switch (ul_reason_for_call) {
 		case DLL_PROCESS_ATTACH:
 		{
+			// Show a message box to visually confirm the DLL is loaded
+			MessageBoxA(NULL, "GodsOfNorrath Hook DLL Loaded!", "Debug - GodsOfNorrath", MB_OK);
+
+			// Clear log file on first load
+			FILE* f = fopen("eqhook_debug.log", "w");
+			if (f) {
+				fprintf(f, "=== GodsOfNorrath Hook DLL Debug Log ===\n");
+				fprintf(f, "DLL loaded at %p\n", hModule);
+				fclose(f);
+			}
+
+			DebugLog("DLL_PROCESS_ATTACH: hModule=0x%p, lpReserved=0x%p", hModule, lpReserved);
+
 			DisableThreadLibraryCalls(hModule);
 
-			// Load the real dinput8.dll from SysWOW64 so DirectInput still works
-			LoadRealDinput8();
-
 			// Initialize our hooks in a separate thread to avoid deadlocks
+			DebugLog("DLL_PROCESS_ATTACH: Creating init thread...");
 			HANDLE hThread = CreateThread(
 				NULL, 0, InitThreadProc, NULL, 0, NULL
 			);
 			if (hThread) {
+				DebugLog("DLL_PROCESS_ATTACH: Init thread created successfully");
 				CloseHandle(hThread);
+			} else {
+				DebugLog("DLL_PROCESS_ATTACH: CreateThread failed with error %lu", GetLastError());
 			}
 			break;
 		}
 		case DLL_PROCESS_DETACH:
 		{
+			DebugLog("DLL_PROCESS_DETACH: Cleaning up...");
 			UninstallGetDbStrHook();
 			UninstallCmdHook();
 			g_tcp_client.Disconnect();
-			if (g_real_dinput8) {
-				FreeLibrary(g_real_dinput8);
-				g_real_dinput8 = NULL;
-			}
+			DebugLog("DLL_PROCESS_DETACH: Cleanup complete");
 			break;
 		}
 		case DLL_THREAD_ATTACH:
@@ -774,4 +785,3 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 	}
 	return TRUE;
 }
-

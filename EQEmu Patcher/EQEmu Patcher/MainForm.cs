@@ -397,7 +397,36 @@ namespace EQEmu_Patcher
             try
             {
                 process = UtilityLibrary.StartEverquest();
-                if (process != null) this.Close();
+                if (process != null)
+                {
+                    // Minimize to system tray and inject DLL
+                    StatusLibrary.Log("Minimizing patcher to system tray...");
+                    this.WindowState = FormWindowState.Minimized;
+                    this.ShowInTaskbar = false;
+
+                    // Start injection in background thread
+                    string dllPath = Path.GetDirectoryName(Application.ExecutablePath) + "\\godsofnorrath.dll";
+                    Task.Run(() =>
+                    {
+                        bool injected = UtilityLibrary.WaitAndInject("eqgame", dllPath);
+                        if (injected)
+                        {
+                            StatusLibrary.Log("DLL injected successfully! Closing patcher...");
+                            // Small delay to let the log message be seen
+                            System.Threading.Thread.Sleep(1000);
+                        }
+                        else
+                        {
+                            StatusLibrary.Log("Failed to inject DLL. The game may not have live db_str support.");
+                            System.Threading.Thread.Sleep(3000);
+                        }
+
+                        // Close the patcher on the UI thread
+                        this.Invoke((MethodInvoker)delegate {
+                            this.Close();
+                        });
+                    });
+                }
                 else MessageBox.Show("The process failed to start");
             }
             catch (Exception err)
@@ -478,7 +507,7 @@ namespace EQEmu_Patcher
             { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
             { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
             { "dbstr_us.txt", "dbstr_us.txt" },
-            { "dinput8.dll", "dinput8.dll" }
+            { "godsofnorrath.dll", "godsofnorrath.dll" }
 
         };
 

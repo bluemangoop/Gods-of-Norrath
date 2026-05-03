@@ -93,16 +93,240 @@ namespace EQEmu_Patcher
         }
 
         /// <summary>
-        /// Name of the DLL to place alongside eqgame.exe (dinput8.dll proxy)
-        /// No injection needed - Windows loads it automatically because
-        /// eqgame.exe imports dinput8.dll and the app directory is checked first.
+        /// Name of the DLL to inject into eqgame.exe
         /// </summary>
-        private static readonly string DllName = "dinput8.dll";
+        private static readonly string DllName = "godsofnorrath.dll";
+
+        // ============================================================================
+        // Win32 API imports for DLL injection
+        // ============================================================================
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(
+            uint dwDesiredAccess,
+            bool bInheritHandle,
+            int dwProcessId
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr VirtualAllocEx(
+            IntPtr hProcess,
+            IntPtr lpAddress,
+            uint dwSize,
+            uint flAllocationType,
+            uint flProtect
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool WriteProcessMemory(
+            IntPtr hProcess,
+            IntPtr lpBaseAddress,
+            byte[] lpBuffer,
+            uint nSize,
+            out uint lpNumberOfBytesWritten
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateRemoteThread(
+            IntPtr hProcess,
+            IntPtr lpThreadAttributes,
+            uint dwStackSize,
+            IntPtr lpStartAddress,
+            IntPtr lpParameter,
+            uint dwCreationFlags,
+            IntPtr lpThreadId
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        // Process access rights
+        private const uint PROCESS_CREATE_THREAD = 0x0002;
+        private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+        private const uint PROCESS_VM_OPERATION = 0x0008;
+        private const uint PROCESS_VM_WRITE = 0x0020;
+        private const uint PROCESS_VM_READ = 0x0010;
+        private const uint PROCESS_SUSPEND_RESUME = 0x0800;
+
+        // Memory allocation
+        private const uint MEM_COMMIT = 0x1000;
+        private const uint MEM_RESERVE = 0x2000;
+        private const uint PAGE_READWRITE = 0x04;
+
+        // WaitForSingleObject
+        private const uint INFINITE = 0xFFFFFFFF;
 
         /// <summary>
-        /// Start EverQuest with the dinput8.dll proxy for live db_str lookups.
-        /// No injection needed - the DLL is loaded automatically by Windows
-        /// when eqgame.exe starts because it's placed in the app directory.
+        /// Inject a DLL into a target process by process ID.
+        /// Uses the classic CreateRemoteThread + LoadLibraryW technique.
+        /// </summary>
+        public static bool InjectDll(int processId, string dllPath)
+        {
+            // Open the target process with all required permissions
+            IntPtr hProcess = OpenProcess(
+                PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+                false,
+                processId
+            );
+
+            if (hProcess == IntPtr.Zero)
+            {
+                StatusLibrary.Log($"  InjectDll: OpenProcess failed (PID {processId}), error {Marshal.GetLastWin32Error()}");
+                return false;
+            }
+
+            try
+            {
+                // Allocate memory in the target process for the DLL path string
+                byte[] dllPathBytes = Encoding.Unicode.GetBytes(dllPath);
+                uint dllPathSize = (uint)dllPathBytes.Length;
+
+                IntPtr remoteMemory = VirtualAllocEx(
+                    hProcess,
+                    IntPtr.Zero,
+                    dllPathSize,
+                    MEM_COMMIT | MEM_RESERVE,
+                    PAGE_READWRITE
+                );
+
+                if (remoteMemory == IntPtr.Zero)
+                {
+                    StatusLibrary.Log($"  InjectDll: VirtualAllocEx failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                // Write the DLL path into the allocated memory
+                uint bytesWritten;
+                if (!WriteProcessMemory(hProcess, remoteMemory, dllPathBytes, dllPathSize, out bytesWritten))
+                {
+                    StatusLibrary.Log($"  InjectDll: WriteProcessMemory failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                // Get the address of LoadLibraryW in kernel32.dll
+                IntPtr kernel32 = GetModuleHandle("kernel32.dll");
+                if (kernel32 == IntPtr.Zero)
+                {
+                    StatusLibrary.Log($"  InjectDll: GetModuleHandle(kernel32) failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                IntPtr loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryW");
+                if (loadLibraryAddr == IntPtr.Zero)
+                {
+                    StatusLibrary.Log($"  InjectDll: GetProcAddress(LoadLibraryW) failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                // Create a remote thread that calls LoadLibraryW with our DLL path
+                IntPtr hThread = CreateRemoteThread(
+                    hProcess,
+                    IntPtr.Zero,
+                    0,
+                    loadLibraryAddr,
+                    remoteMemory,
+                    0,
+                    IntPtr.Zero
+                );
+
+                if (hThread == IntPtr.Zero)
+                {
+                    StatusLibrary.Log($"  InjectDll: CreateRemoteThread failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                // Wait for the thread to complete (30 second timeout)
+                uint waitResult = WaitForSingleObject(hThread, 30000);
+                CloseHandle(hThread);
+
+                if (waitResult == 0xFFFFFFFF)
+                {
+                    StatusLibrary.Log($"  InjectDll: WaitForSingleObject failed, error {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                if (waitResult == 0x00000102) // WAIT_TIMEOUT
+                {
+                    StatusLibrary.Log("  InjectDll: LoadLibrary thread timed out after 30 seconds");
+                    return false;
+                }
+
+                StatusLibrary.Log($"  InjectDll: Successfully injected {Path.GetFileName(dllPath)} into PID {processId}");
+                return true;
+            }
+            finally
+            {
+                CloseHandle(hProcess);
+            }
+        }
+
+        /// <summary>
+        /// Find a process by name and return its first matching process ID.
+        /// </summary>
+        public static int FindProcessId(string processName)
+        {
+            Process[] processes = Process.GetProcessesByName(processName);
+            if (processes.Length > 0)
+            {
+                return processes[0].Id;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Wait for eqgame.exe to appear, then inject the DLL.
+        /// Polls every 500ms for up to 60 seconds.
+        /// </summary>
+        public static bool WaitAndInject(string processName, string dllPath)
+        {
+            StatusLibrary.Log($"Waiting for {processName}.exe to start...");
+
+            int maxAttempts = 120; // 60 seconds at 500ms intervals
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                int pid = FindProcessId(processName);
+                if (pid != -1)
+                {
+                    StatusLibrary.Log($"Found {processName}.exe (PID: {pid}), injecting DLL...");
+
+                    // Give the process a moment to initialize
+                    System.Threading.Thread.Sleep(1000);
+
+                    bool success = InjectDll(pid, dllPath);
+                    if (success)
+                    {
+                        StatusLibrary.Log($"DLL injection successful!");
+                        return true;
+                    }
+                    else
+                    {
+                        StatusLibrary.Log($"DLL injection failed, will retry...");
+                        // Try again after a brief delay
+                        System.Threading.Thread.Sleep(2000);
+                        continue;
+                    }
+                }
+
+                System.Threading.Thread.Sleep(500);
+            }
+
+            StatusLibrary.Log($"Timed out waiting for {processName}.exe to start.");
+            return false;
+        }
+
+        /// <summary>
+        /// Start EverQuest with the godsofnorrath.dll injection.
+        /// The patcher launches eqgame.exe, then injects the DLL into the running process.
         /// </summary>
         public static System.Diagnostics.Process StartEverquest()
         {
@@ -112,14 +336,14 @@ namespace EQEmu_Patcher
             // Check if the DLL exists
             if (!File.Exists(dllPath))
             {
-                StatusLibrary.Log($"Warning: {DllName} not found at {dllPath}. Starting without live db_str proxy support.");
+                StatusLibrary.Log($"Warning: {DllName} not found at {dllPath}. Starting without hook support.");
             }
             else
             {
-                StatusLibrary.Log($"Starting eqgame.exe with {DllName} proxy (auto-loaded by Windows)...");
+                StatusLibrary.Log($"Starting eqgame.exe with {DllName} injection...");
             }
 
-            // Start eqgame.exe normally - Windows will load dinput8.dll from the app directory
+            // Start eqgame.exe normally
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = eqPath + "\\eqgame.exe",

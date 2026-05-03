@@ -1,28 +1,40 @@
-# Makefile for building the EQ Client dinput8.dll Proxy
+# Makefile for building the EQ Client Hook DLLs
 # Requires MinGW-w64 cross-compiler on Linux, or MSVC on Windows
 #
-# This builds a dinput8.dll that acts as a proxy - it forwards all 5 real
-# dinput8 exports to the system DLL while installing our hooks for live
-# db_str lookups and chat commands. No injection needed - eqgame.exe loads
-# this automatically because Windows checks the app directory first.
+# Targets:
+#   dinput8.dll       - Proxy DLL (loads real dinput8 + installs hooks)
+#   godsofnorrath.dll - Injection DLL (injected by patcher into eqgame.exe)
+#
+# IMPORTANT: eqgame.exe is a 32-bit executable, so we MUST use the 32-bit
+# (i686) MinGW compiler. A 64-bit DLL cannot be loaded by a 32-bit process.
 
-CXX = x86_64-w64-mingw32-g++
+CXX = i686-w64-mingw32-g++
 CXXFLAGS = -O2 -Wall -shared -static-libgcc -static-libstdc++ -DNOMINMAX
-LDFLAGS = -lws2_32 -lwininet -Wl,dinput8.def
-TARGET = dinput8.dll
-SRC = dllmain.cpp
+LDFLAGS = -lws2_32 -lwininet -Wl,--enable-stdcall-fixup
 
-all: $(TARGET)
+# dinput8.dll - proxy DLL with .def file for export forwarding
+DINPUT8_TARGET = dinput8.dll
+DINPUT8_SRC = dllmain.cpp
+DINPUT8_LDFLAGS = $(LDFLAGS) -Wl,dinput8.def
 
-$(TARGET): $(SRC) dinput8.def
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
+# godsofnorrath.dll - injection DLL (no .def file needed, no proxy)
+GODSOFNORRATH_TARGET = godsofnorrath.dll
+GODSOFNORRATH_SRC = godsofnorrath.cpp
+
+all: $(DINPUT8_TARGET) $(GODSOFNORRATH_TARGET)
+
+$(DINPUT8_TARGET): $(DINPUT8_SRC) dinput8.def
+	$(CXX) $(CXXFLAGS) -o $(DINPUT8_TARGET) $(DINPUT8_SRC) $(DINPUT8_LDFLAGS)
+
+$(GODSOFNORRATH_TARGET): $(GODSOFNORRATH_SRC)
+	$(CXX) $(CXXFLAGS) -o $(GODSOFNORRATH_TARGET) $(GODSOFNORRATH_SRC) $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(DINPUT8_TARGET) $(GODSOFNORRATH_TARGET)
 
 # For building on Windows with MSVC
 msvc:
-	cl /O2 /LD /Fe:$(TARGET) $(SRC) ws2_32.lib /DEF:dinput8.def
+	cl /O2 /LD /Fe:$(DINPUT8_TARGET) $(DINPUT8_SRC) ws2_32.lib /DEF:dinput8.def
+	cl /O2 /LD /Fe:$(GODSOFNORRATH_TARGET) $(GODSOFNORRATH_SRC) ws2_32.lib
 
 .PHONY: all clean msvc
-
