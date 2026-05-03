@@ -203,9 +203,9 @@ namespace EQEmu_Patcher
                 StatusLibrary.Log("Patcher updated successfully!");
             }
 
-            // Patcher update check disabled - using custom build
-            // cts = new CancellationTokenSource();
-            // await CheckForPatcherUpdateAsync();
+            // Check for patcher updates from GitHub releases
+            cts = new CancellationTokenSource();
+            await CheckForPatcherUpdateAsync();
         }
 
         /// <summary>
