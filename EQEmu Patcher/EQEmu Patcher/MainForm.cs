@@ -520,7 +520,7 @@ namespace EQEmu_Patcher
         // Whitelist of static files to patch from manifest (only these will be downloaded)
         private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "Resources/GlobalLoad_chr.txt",
+            "Resources/GlobalLoad.txt",
             "eqhost.txt"
         };
 
