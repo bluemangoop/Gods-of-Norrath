@@ -501,27 +501,32 @@ namespace EQEmu_Patcher
 
         // Static file URLs for client files served via nginx
         // Key = local file path (relative to EQ folder), Value = URL path on the file server
-        private static readonly Dictionary<string, string> SpireExports = new Dictionary<string, string>
-        {
-            { "spells_us.txt", "spells_us.txt" },
-            { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
-            { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
-            { "dbstr_us.txt", "dbstr_us.txt" },
-            { "godsofnorrath.dll", "godsofnorrath.dll" }
-
-        };
+        // Commented out - now using manifest.json for all downloads
+        //private static readonly Dictionary<string, string> SpireExports = new Dictionary<string, string>
+        //{
+        //    { "spells_us.txt", "spells_us.txt" },
+        //    { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
+        //    { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
+        //    { "dbstr_us.txt", "dbstr_us.txt" },
+        //    { "godsofnorrath.dll", "godsofnorrath.dll" }
+        //
+        //};
 
         // Base URL for static file server - change this to your server
-        private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
+        // Commented out - now using manifest.json filesUrlPrefix
+        //private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
 
         // GitHub manifest URL for static file patching
-        private static readonly string ManifestUrl = "https://raw.githubusercontent.com/atroche/eqemupatcher/refs/heads/master/manifest.json";
+        private static readonly string ManifestUrl = "https://raw.githubusercontent.com/bluemangoop/eqemupatcher-test/refs/heads/main/manifest.json";
 
         // Whitelist of static files to patch from manifest (only these will be downloaded)
         private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
+            "Resources/BaseData.txt",
             "Resources/GlobalLoad.txt",
-            "eqhost.txt"
+            "Resources/SkillCaps.txt",
+            "dbstr_us.txt",
+            "spells_us.txt"
         };
 
         // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)
@@ -540,60 +545,8 @@ namespace EQEmu_Patcher
             int totalFilesDownloaded = 0;
 
             // ============================================
-            // PHASE 1: Download Spire export files (dynamic from database)
-            // ============================================
-            StatusLibrary.Log("Downloading server data files from Spire...");
-            int spireFileCount = 0;
-
-            foreach (var spireFile in SpireExports)
-            {
-                if (isPatchCancelled)
-                {
-                    StatusLibrary.Log("Patching cancelled.");
-                    return;
-                }
-
-                string spireFilePath = spireFile.Key;
-                string endpoint = spireFile.Value;
-                string url = SpireBaseUrl + endpoint;
-                string localPath = Path.GetDirectoryName(Application.ExecutablePath) + "\\" + spireFilePath;
-                string displayName = Path.GetFileName(spireFilePath);
-
-                try
-                {
-                    // Create directory if needed (for Resources subfolder)
-                    string dir = Path.GetDirectoryName(localPath);
-                    if (!Directory.Exists(dir))
-                    {
-                        Directory.CreateDirectory(dir);
-                    }
-
-                    StatusLibrary.Log($"Downloading {displayName}...");
-                    var data = await Download(cts, url);
-                    if (data != null && data.Length > 0)
-                    {
-                        File.WriteAllBytes(localPath, data);
-                        StatusLibrary.Log($"  {displayName} ({generateSize(data.Length)})");
-                        spireFileCount++;
-                        totalBytes += data.Length;
-                        totalFilesDownloaded++;
-                    }
-                    else
-                    {
-                        StatusLibrary.Log($"  Warning: {displayName} was empty or failed");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    StatusLibrary.Log($"  Failed to download {displayName}: {ex.Message}");
-                }
-
-                // Progress: 0-30% for Spire files
-                StatusLibrary.SetProgress((int)(((spireFileCount) / (double)SpireExports.Count) * 3000));
-            }
-
-            // ============================================
-            // PHASE 2: Download manifest and patch static files from GitHub
+            // PHASE 1: Download manifest and patch static files from GitHub
+            // (SpireExports hardcoded downloads removed - now using manifest.json)
             // ============================================
             StatusLibrary.Log("");
             StatusLibrary.Log("Checking for static file updates from GitHub...");
@@ -753,7 +706,7 @@ namespace EQEmu_Patcher
             }
 
             // ============================================
-            // PHASE 3: Move non-whitelisted storyline .txt files to old/ folder
+            // PHASE 2: Move non-whitelisted storyline .txt files to old/ folder
             // ============================================
             StatusLibrary.Log("");
             StatusLibrary.Log("Cleaning up storyline files...");
