@@ -26,7 +26,7 @@ on:
       version:
         description: 'Version'
         required: false
-        default: '1.0.0.0'
+        default: ''
 
 permissions:
   contents: write
@@ -48,6 +48,23 @@ jobs:
     - name: Restore NuGet packages
       run: nuget restore "EQEmu Patcher/EQEmu Patcher.sln"
 
+    # Extract version from csproj file
+    - name: Extract version from csproj
+      id: get_version
+      shell: pwsh
+      run: |
+        $csproj = "EQEmu Patcher/EQEmu Patcher/eqemupatcher.csproj"
+        $content = Get-Content $csproj -Raw
+        $match = [regex]::Match($content, '<ApplicationVersion>([^<]+)</ApplicationVersion>')
+        if ($match.Success) {
+          $version = $match.Groups[1].Value
+          Write-Host "Version from csproj: $version"
+          echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        } else {
+          Write-Host "Could not extract version from csproj, using default"
+          echo "version=1.0.0.0" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        }
+
     - name: Build (Debug)
       run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="Any CPU"
       env:
@@ -55,7 +72,7 @@ jobs:
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
         FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
-        VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
+        VERSION: ${{ github.event.inputs.version || steps.get_version.outputs.version }}
 
     - name: Build (Release)
       run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Release /p:Platform="Any CPU"
@@ -64,7 +81,7 @@ jobs:
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
         FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
-        VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
+        VERSION: ${{ github.event.inputs.version || steps.get_version.outputs.version }}
 
     - name: Upload artifact (Debug)
       uses: actions/upload-artifact@v4
@@ -83,12 +100,12 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v${{ github.event.inputs.version || '1.0.0.0' }}
-        name: "v${{ github.event.inputs.version || '1.0.0.0' }}"
+        tag_name: v${{ github.event.inputs.version || steps.get_version.outputs.version }}
+        name: "v${{ github.event.inputs.version || steps.get_version.outputs.version }}"
         body: |
           Auto-built from commit ${{ github.sha }}
           
-          Version: ${{ github.event.inputs.version || '1.0.0.0' }}
+          Version: ${{ github.event.inputs.version || steps.get_version.outputs.version }}
         files: |
           EQEmu Patcher/EQEmu Patcher/bin/Release/godsofnorrath.exe
         generate_release_notes: false
