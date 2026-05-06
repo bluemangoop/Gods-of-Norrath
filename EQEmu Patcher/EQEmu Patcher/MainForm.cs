@@ -516,8 +516,8 @@ namespace EQEmu_Patcher
         // Commented out - now using manifest.json filesUrlPrefix
         //private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
 
-        // GitHub manifest URL for static file patching
-        private static readonly string ManifestUrl = "https://raw.githubusercontent.com/bluemangoop/Gods-of-Norrath/refs/heads/main/manifest.json";
+        // Web server manifest URL for static file patching (auto-generated every 30s)
+        private static readonly string ManifestUrl = "http://108.181.218.166/patch/manifest.json";
 
         // Whitelist of static files to patch from manifest (only these will be downloaded)
         private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -545,11 +545,11 @@ namespace EQEmu_Patcher
             int totalFilesDownloaded = 0;
 
             // ============================================
-            // PHASE 1: Download manifest and patch static files from GitHub
+            // PHASE 1: Download manifest and patch static files from web server
             // (SpireExports hardcoded downloads removed - now using manifest.json)
             // ============================================
             StatusLibrary.Log("");
-            StatusLibrary.Log("Checking for static file updates from GitHub...");
+            StatusLibrary.Log("Checking for static file updates from web server...");
             
             try
             {
