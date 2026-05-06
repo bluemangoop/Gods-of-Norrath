@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0.1] 2026-05-06
+
+- Patcher now downloads manifest from web server instead of GitHub
+- Manifest auto-generated every 30 seconds with live xxhash64 hashes
+- Fixed CRC32 collision bug in export_watcher (replaced with MD5)
+
 ## [1.0.4] 2023-02-11
 
 - Introduced new CICD-friendly pipeline
