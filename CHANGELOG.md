@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0.3] 2026-05-06
+
+- Replaced xxhash64 checksum system with file size + mtime comparison
+- Server-side manifest generator now records {size, mtime} instead of xxhash64 hashes
+- Client-side patcher compares FileInfo.Length and LastWriteTimeUtc against manifest values
+- Fixed checksum mismatch bug where files always re-downloaded or never updated
+
 ## [1.0.0.2] 2026-05-06
 
 - Updated manifest URL to use domain (godsofnorrath.online) instead of raw IP

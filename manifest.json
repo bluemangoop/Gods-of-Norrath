@@ -9,10 +9,10 @@
     "hosts": [],
     "required": [],
     "files": {
-        "Resources/BaseData.txt": "0DC54BE5EDB79EC7",
-        "Resources/GlobalLoad.txt": "8084C54204FD8CAD",
-        "Resources/SkillCaps.txt": "C42CED5942EB52AA",
-        "dbstr_us.txt": "A604644AAD98CEFC",
-        "spells_us.txt": "415888A6ED1888CC"
+        "Resources/BaseData.txt": {"size": 0, "mtime": 0.0},
+        "Resources/GlobalLoad.txt": {"size": 0, "mtime": 0.0},
+        "Resources/SkillCaps.txt": {"size": 0, "mtime": 0.0},
+        "dbstr_us.txt": {"size": 0, "mtime": 0.0},
+        "spells_us.txt": {"size": 0, "mtime": 0.0}
     }
 }

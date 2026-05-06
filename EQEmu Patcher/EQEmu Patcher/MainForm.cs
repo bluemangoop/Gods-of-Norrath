@@ -581,7 +581,7 @@ namespace EQEmu_Patcher
                         int manifestFileCount = 0;
                         int manifestFilesChecked = 0;
                         int manifestFilesTotal = manifest.files.Count;
-                        List<KeyValuePair<string, string>> filesToDownload = new List<KeyValuePair<string, string>>();
+                        List<KeyValuePair<string, FileEntryInfo>> filesToDownload = new List<KeyValuePair<string, FileEntryInfo>>();
 
                         // First pass: check which files need updating (only whitelisted files)
                         foreach (var fileEntry in manifest.files)
@@ -600,7 +600,7 @@ namespace EQEmu_Patcher
                             }
 
                             string relativePath = fileEntry.Key.Replace("/", "\\");
-                            string expectedHash = fileEntry.Value;
+                            FileEntryInfo expectedInfo = fileEntry.Value;
                             string localPath = Path.Combine(basePath, relativePath);
 
                             // Security check: ensure path is within EQ directory
@@ -619,8 +619,13 @@ namespace EQEmu_Patcher
                             {
                                 try
                                 {
-                                    string localHash = XXHash64.ComputeFileHash(localPath);
-                                    if (!string.Equals(localHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                                    var fileInfo = new FileInfo(localPath);
+                                    long localSize = fileInfo.Length;
+                                    // Convert LastWriteTimeUtc to Unix timestamp (seconds since epoch)
+                                    DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                                    double localMtime = (fileInfo.LastWriteTimeUtc - epoch).TotalSeconds;
+
+                                    if (localSize != expectedInfo.size || Math.Abs(localMtime - expectedInfo.mtime) > 0.001)
                                     {
                                         needsDownload = true;
                                     }
@@ -865,6 +870,15 @@ namespace EQEmu_Patcher
     }
 
     /// <summary>
+    /// File entry info: size (bytes) + mtime (Unix timestamp) instead of hash.
+    /// </summary>
+    public class FileEntryInfo
+    {
+        public long size { get; set; }
+        public double mtime { get; set; }
+    }
+
+    /// <summary>
     /// Manifest structure matching manifest.json from GitHub
     /// </summary>
     public class PatchManifest
@@ -878,7 +892,7 @@ namespace EQEmu_Patcher
         public string description { get; set; }
         public List<string> hosts { get; set; }
         public List<string> required { get; set; }
-        public Dictionary<string, string> files { get; set; }
+        public Dictionary<string, FileEntryInfo> files { get; set; }
     }
 }
 
