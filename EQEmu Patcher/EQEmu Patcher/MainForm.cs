@@ -10,7 +10,6 @@ using YamlDotNet.Serialization.NamingConventions;
 using Microsoft.WindowsAPICodePack.Taskbar;
 using System.Diagnostics;
 using System.Threading;
-using System.Web.Script.Serialization;
 
 namespace EQEmu_Patcher
 {
@@ -499,34 +498,16 @@ namespace EQEmu_Patcher
             });
         }
 
-        // Static file URLs for client files served via nginx
-        // Key = local file path (relative to EQ folder), Value = URL path on the file server
-        // Commented out - now using manifest.json for all downloads
-        //private static readonly Dictionary<string, string> SpireExports = new Dictionary<string, string>
-        //{
-        //    { "spells_us.txt", "spells_us.txt" },
-        //    { "Resources\\SkillCaps.txt", "Resources/SkillCaps.txt" },
-        //    { "Resources\\BaseData.txt", "Resources/BaseData.txt" },
-        //    { "dbstr_us.txt", "dbstr_us.txt" },
-        //    { "godsofnorrath.dll", "godsofnorrath.dll" }
-        //
-        //};
-
-        // Base URL for static file server - change this to your server
-        // Commented out - now using manifest.json filesUrlPrefix
-        //private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
-
-        // Web server manifest URL for static file patching (auto-generated every 30s)
-        private static readonly string ManifestUrl = "https://godsofnorrath.online/patch/manifest.json";
-
-        // Whitelist of static files to patch from manifest (only these will be downloaded)
-        private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        // Hardcoded list of files to download from the web server.
+        // Key = local relative path (where to save in EQ directory)
+        // Value = URL path on the file server
+        private static readonly Dictionary<string, string> StaticFilesToDownload = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            "Resources/BaseData.txt",
-            "Resources/GlobalLoad.txt",
-            "Resources/SkillCaps.txt",
-            "dbstr_us.txt",
-            "spells_us.txt"
+            { "Resources\\BaseData.txt",  "https://godsofnorrath.online/patch/rof/Resources/BaseData.txt" },
+            { "Resources\\SkillCaps.txt", "https://godsofnorrath.online/patch/rof/Resources/SkillCaps.txt" },
+            { "Resources\\GlobalLoad.txt","https://godsofnorrath.online/patch/rof/Resources/GlobalLoad.txt" },
+            { "dbstr_us.txt",             "https://godsofnorrath.online/patch/rof/dbstr_us.txt" },
+            { "spells_us.txt",            "https://godsofnorrath.online/patch/rof/spells_us.txt" },
         };
 
         // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)
@@ -545,169 +526,71 @@ namespace EQEmu_Patcher
             int totalFilesDownloaded = 0;
 
             // ============================================
-            // PHASE 1: Download manifest and patch static files from web server
-            // (SpireExports hardcoded downloads removed - now using manifest.json)
+            // PHASE 1: Download static files from web server
+            // Files are downloaded unconditionally from hardcoded URLs
             // ============================================
             StatusLibrary.Log("");
-            StatusLibrary.Log("Checking for static file updates from web server...");
-            
-            try
-            {
-                // Download manifest
-                var manifestData = await Download(cts, ManifestUrl);
-                if (manifestData == null || manifestData.Length == 0)
-                {
-                    StatusLibrary.Log("  Warning: Could not download manifest");
-                }
-                else
-                {
-                    string manifestJson = System.Text.Encoding.UTF8.GetString(manifestData);
-                    var serializer = new JavaScriptSerializer();
-                    var manifest = serializer.Deserialize<PatchManifest>(manifestJson);
+            StatusLibrary.Log("Downloading static files from web server...");
 
-                    if (manifest?.files == null || manifest.files.Count == 0)
+            string basePath = Path.GetDirectoryName(Application.ExecutablePath);
+            int staticFileCount = 0;
+            int staticFileTotal = StaticFilesToDownload.Count;
+            int staticFileIndex = 0;
+
+            foreach (var kvp in StaticFilesToDownload)
+            {
+                if (isPatchCancelled)
+                {
+                    StatusLibrary.Log("Patching cancelled.");
+                    return;
+                }
+
+                string localRelativePath = kvp.Key;
+                string downloadUrl = kvp.Value;
+                string displayName = Path.GetFileName(localRelativePath);
+
+                // Security check: ensure path is within EQ directory
+                if (!UtilityLibrary.IsPathChild(localRelativePath))
+                {
+                    StatusLibrary.Log($"  Skipping {displayName} (invalid path)");
+                    staticFileIndex++;
+                    continue;
+                }
+
+                try
+                {
+                    StatusLibrary.Log($"  Downloading {displayName}...");
+                    string result = await DownloadFile(cts, downloadUrl, localRelativePath);
+                    if (string.IsNullOrEmpty(result))
                     {
-                        StatusLibrary.Log("  Warning: Manifest contains no files");
+                        string localPath = Path.Combine(basePath, localRelativePath);
+                        if (File.Exists(localPath))
+                        {
+                            var fileInfo = new FileInfo(localPath);
+                            totalBytes += fileInfo.Length;
+                        }
+                        staticFileCount++;
+                        totalFilesDownloaded++;
+                        StatusLibrary.Log($"    {displayName} updated");
                     }
                     else
                     {
-                        string basePath = Path.GetDirectoryName(Application.ExecutablePath);
-                        string filesUrlPrefix = manifest.filesUrlPrefix;
-                        if (!filesUrlPrefix.EndsWith("/"))
-                        {
-                            filesUrlPrefix += "/";
-                        }
-
-                        int manifestFileCount = 0;
-                        int manifestFilesChecked = 0;
-                        int manifestFilesTotal = manifest.files.Count;
-                        List<KeyValuePair<string, FileEntryInfo>> filesToDownload = new List<KeyValuePair<string, FileEntryInfo>>();
-
-                        // First pass: check which files need updating (only whitelisted files)
-                        foreach (var fileEntry in manifest.files)
-                        {
-                            if (isPatchCancelled)
-                            {
-                                StatusLibrary.Log("Patching cancelled.");
-                                return;
-                            }
-
-                            // Skip files not in whitelist
-                            if (!ManifestFilesWhitelist.Contains(fileEntry.Key))
-                            {
-                                manifestFilesChecked++;
-                                continue;
-                            }
-
-                            string relativePath = fileEntry.Key.Replace("/", "\\");
-                            FileEntryInfo expectedInfo = fileEntry.Value;
-                            string localPath = Path.Combine(basePath, relativePath);
-
-                            // Security check: ensure path is within EQ directory
-                            if (!UtilityLibrary.IsPathChild(relativePath))
-                            {
-                                continue;
-                            }
-
-                            bool needsDownload = false;
-
-                            if (!File.Exists(localPath))
-                            {
-                                needsDownload = true;
-                            }
-                            else
-                            {
-                                try
-                                {
-                                    var fileInfo = new FileInfo(localPath);
-                                    long localSize = fileInfo.Length;
-                                    // Convert LastWriteTimeUtc to Unix timestamp (seconds since epoch)
-                                    DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-                                    double localMtime = (fileInfo.LastWriteTimeUtc - epoch).TotalSeconds;
-
-                                    if (localSize != expectedInfo.size || Math.Abs(localMtime - expectedInfo.mtime) > 0.001)
-                                    {
-                                        needsDownload = true;
-                                    }
-                                }
-                                catch
-                                {
-                                    needsDownload = true;
-                                }
-                            }
-
-                            if (needsDownload)
-                            {
-                                filesToDownload.Add(fileEntry);
-                            }
-
-                            manifestFilesChecked++;
-                            // Progress: 30-40% for checking files
-                            StatusLibrary.SetProgress(3000 + (int)((manifestFilesChecked / (double)manifestFilesTotal) * 1000));
-                        }
-
-                        if (filesToDownload.Count == 0)
-                        {
-                            StatusLibrary.Log("  All static files are up to date.");
-                        }
-                        else
-                        {
-                            StatusLibrary.Log($"  {filesToDownload.Count} file(s) need updating...");
-
-                            int downloadedCount = 0;
-                            foreach (var fileEntry in filesToDownload)
-                            {
-                                if (isPatchCancelled)
-                                {
-                                    StatusLibrary.Log("Patching cancelled.");
-                                    return;
-                                }
-
-                                string relativePath = fileEntry.Key;
-                                string downloadUrl = filesUrlPrefix + relativePath.Replace("\\", "/");
-                                string localRelativePath = relativePath.Replace("/", "\\");
-                                string displayName = Path.GetFileName(relativePath);
-
-                                try
-                                {
-                                    StatusLibrary.Log($"  Downloading {displayName}...");
-                                    string result = await DownloadFile(cts, downloadUrl, localRelativePath);
-                                    if (string.IsNullOrEmpty(result))
-                                    {
-                                        // Get file size for reporting
-                                        string localPath = Path.Combine(basePath, localRelativePath);
-                                        if (File.Exists(localPath))
-                                        {
-                                            var fileInfo = new FileInfo(localPath);
-                                            totalBytes += fileInfo.Length;
-                                        }
-                                        manifestFileCount++;
-                                        totalFilesDownloaded++;
-                                        StatusLibrary.Log($"    {displayName} updated");
-                                    }
-                                    else
-                                    {
-                                        StatusLibrary.Log($"    Failed: {result}");
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    StatusLibrary.Log($"    Failed to download {displayName}: {ex.Message}");
-                                }
-
-                                downloadedCount++;
-                                // Progress: 40-100% for downloading files
-                                StatusLibrary.SetProgress(4000 + (int)((downloadedCount / (double)filesToDownload.Count) * 6000));
-                            }
-
-                            StatusLibrary.Log($"  Updated {manifestFileCount} static file(s).");
-                        }
+                        StatusLibrary.Log($"    Failed: {result}");
                     }
                 }
+                catch (Exception ex)
+                {
+                    StatusLibrary.Log($"    Failed to download {displayName}: {ex.Message}");
+                }
+
+                staticFileIndex++;
+                // Progress: 0-70% for downloading files
+                StatusLibrary.SetProgress((int)((staticFileIndex / (double)staticFileTotal) * 7000));
             }
-            catch (Exception ex)
+
+            if (staticFileCount > 0)
             {
-                StatusLibrary.Log($"  Error checking manifest: {ex.Message}");
+                StatusLibrary.Log($"  Downloaded {staticFileCount} static file(s).");
             }
 
             // ============================================
@@ -869,31 +752,6 @@ namespace EQEmu_Patcher
         public int size { get; set; }
     }
 
-    /// <summary>
-    /// File entry info: size (bytes) + mtime (Unix timestamp) instead of hash.
-    /// </summary>
-    public class FileEntryInfo
-    {
-        public long size { get; set; }
-        public double mtime { get; set; }
-    }
-
-    /// <summary>
-    /// Manifest structure matching manifest.json from GitHub
-    /// </summary>
-    public class PatchManifest
-    {
-        public string shortName { get; set; }
-        public string longName { get; set; }
-        public string customFilesUrl { get; set; }
-        public string filesUrlPrefix { get; set; }
-        public string version { get; set; }
-        public string website { get; set; }
-        public string description { get; set; }
-        public List<string> hosts { get; set; }
-        public List<string> required { get; set; }
-        public Dictionary<string, FileEntryInfo> files { get; set; }
-    }
 }
 
 
