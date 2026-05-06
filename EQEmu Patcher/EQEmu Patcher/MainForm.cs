@@ -524,59 +524,10 @@ namespace EQEmu_Patcher
             "eqhost.txt"
         };
 
-        // Storyline files to delete during patching
-        private static readonly HashSet<string> StorylineFilesToDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)
+        private static readonly HashSet<string> StorylineFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "storyline/storySerpents.txt",
-            "storyline/storyRevelation.txt",
-            "storyline/storyPlea.txt",
-            "storyline/storyMessenger.txt",
-            "storyline/storyMagic.txt",
-            "storyline/storyLanys.txt",
-            "storyline/storyGate.txt",
-            "storyline/storyDarkhollow.txt",
-            "storyline/storyChosen.txt",
-            "storyline/storyAbysmal.txt",
-            "storyline/storyWhispers.txt",
-            "storyline/storyVisions.txt",
-            "storyline/storyUnturned.txt",
-            "storyline/storyTroubled.txt",
-            "storyline/storyTreachery.txt",
-            "storyline/storyStone.txt",
-            "storyline/storyShadow.txt",
-            "storyline/storySeeking.txt",
-            "storyline/storySecrets.txt",
-            "storyline/storySearch.txt",
-            "storyline/storySea.txt",
-            "storyline/storyScholar.txt",
-            "storyline/storyRumor.txt",
-            "storyline/storyRiches.txt",
-            "storyline/storyReunion.txt",
-            "storyline/storyPursuit.txt",
-            "storyline/storyProphecy.txt",
-            "storyline/storyPromise.txt",
-            "storyline/storyPath.txt",
-            "storyline/storyPassage.txt",
-            "storyline/storyPantheon.txt",
-            "storyline/storyNest.txt",
-            "storyline/storyMountains.txt",
-            "storyline/storyMithaniel.txt",
-            "storyline/storyMines.txt",
-            "storyline/storyMinds.txt",
-            "storyline/storyMadman.txt",
-            "storyline/storyJourney.txt",
-            "storyline/storyGrobb.txt",
-            "storyline/storyFires.txt",
-            "storyline/storyFelwithe.txt",
-            "storyline/storyExile.txt",
-            "storyline/storyDawn.txt",
-            "storyline/storyDaughter.txt",
-            "storyline/storyCurrents.txt",
-            "storyline/storyCourse.txt",
-            "storyline/storyBuild.txt",
-            "storyline/storyAmulet.txt",
-            "storyline/storyAgreement.txt",
-            "storyline/storyNektulos.txt"
+            "storyMasteries.txt"
         };
 
         private async Task AsyncPatch()
@@ -802,52 +753,77 @@ namespace EQEmu_Patcher
             }
 
             // ============================================
-            // PHASE 3: Delete storyline files
+            // PHASE 3: Move non-whitelisted storyline .txt files to old/ folder
             // ============================================
             StatusLibrary.Log("");
             StatusLibrary.Log("Cleaning up storyline files...");
             string eqPath = Path.GetDirectoryName(Application.ExecutablePath);
-            int deletedCount = 0;
+            string storylineDir = Path.Combine(eqPath, "storyline");
+            string oldDir = Path.Combine(storylineDir, "old");
+            int movedCount = 0;
 
-            foreach (var storyFile in StorylineFilesToDelete)
+            if (Directory.Exists(storylineDir))
             {
-                if (isPatchCancelled)
-                {
-                    StatusLibrary.Log("Patching cancelled.");
-                    return;
-                }
+                // Get all .txt files in the storyline folder (not in subdirectories)
+                var txtFiles = Directory.GetFiles(storylineDir, "*.txt", SearchOption.TopDirectoryOnly);
 
-                string relativePath = storyFile.Replace("/", "\\");
-
-                // Security check: ensure path is within EQ directory
-                if (!UtilityLibrary.IsPathChild(relativePath))
+                foreach (var filePath in txtFiles)
                 {
-                    continue;
-                }
-
-                string localPath = Path.Combine(eqPath, relativePath);
-                try
-                {
-                    if (File.Exists(localPath))
+                    if (isPatchCancelled)
                     {
-                        File.Delete(localPath);
-                        StatusLibrary.Log($"  Deleted {storyFile}");
-                        deletedCount++;
+                        StatusLibrary.Log("Patching cancelled.");
+                        return;
                     }
-                }
-                catch (Exception ex)
-                {
-                    StatusLibrary.Log($"  Failed to delete {storyFile}: {ex.Message}");
+
+                    string fileName = Path.GetFileName(filePath);
+
+                    // Skip whitelisted files
+                    if (StorylineFilesWhitelist.Contains(fileName))
+                    {
+                        continue;
+                    }
+
+                    // Security check: ensure path is within EQ directory
+                    string relativePath = "storyline\\" + fileName;
+                    if (!UtilityLibrary.IsPathChild(relativePath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        // Create old directory if it doesn't exist
+                        if (!Directory.Exists(oldDir))
+                        {
+                            Directory.CreateDirectory(oldDir);
+                        }
+
+                        string destPath = Path.Combine(oldDir, fileName);
+
+                        // If file already exists in old/, overwrite it
+                        if (File.Exists(destPath))
+                        {
+                            File.Delete(destPath);
+                        }
+
+                        File.Move(filePath, destPath);
+                        StatusLibrary.Log($"  Moved {fileName} to old/");
+                        movedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        StatusLibrary.Log($"  Failed to move {fileName}: {ex.Message}");
+                    }
                 }
             }
 
-            if (deletedCount == 0)
+            if (movedCount == 0)
             {
                 StatusLibrary.Log("  No storyline files to clean up.");
             }
             else
             {
-                StatusLibrary.Log($"  Deleted {deletedCount} storyline file(s).");
+                StatusLibrary.Log($"  Moved {movedCount} storyline file(s) to old/ folder.");
             }
 
             StatusLibrary.SetProgress(10000);
