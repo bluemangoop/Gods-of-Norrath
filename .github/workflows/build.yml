@@ -78,9 +78,9 @@ jobs:
         name: godsofnorrath-release
         path: "EQEmu Patcher/EQEmu Patcher/bin/Release/"
 
-    # Only create a release when manually triggered (workflow_dispatch)
+    # Create a release on every push to main
     - name: Create Release
-      if: github.event_name == 'workflow_dispatch'
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ github.event.inputs.version || '1.0.0.0' }}
