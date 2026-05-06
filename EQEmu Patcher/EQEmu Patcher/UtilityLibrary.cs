@@ -388,7 +388,7 @@ namespace EQEmu_Patcher
         #region Self-Update
 
         // GitHub repository for update checks
-        private static readonly string GitHubApiUrl = "https://api.github.com/repos/bluemangoop/eqemupatcher-test/releases/latest";
+        private static readonly string GitHubApiUrl = "https://api.github.com/repos/bluemangoop/Gods-of-Norrath/releases/latest";
 
         /// <summary>
         /// Result of checking for patcher updates

@@ -517,7 +517,7 @@ namespace EQEmu_Patcher
         //private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
 
         // GitHub manifest URL for static file patching
-        private static readonly string ManifestUrl = "https://raw.githubusercontent.com/bluemangoop/eqemupatcher-test/refs/heads/main/manifest.json";
+        private static readonly string ManifestUrl = "https://raw.githubusercontent.com/bluemangoop/Gods-of-Norrath/refs/heads/main/manifest.json";
 
         // Whitelist of static files to patch from manifest (only these will be downloaded)
         private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
