@@ -69,8 +69,8 @@ jobs:
       run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Debug /p:Platform="Any CPU"
       env:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
-        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
-        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
+        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'https://godsofnorrath.online/patch/rof/' }}
+        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'https://godsofnorrath.online/patch/rof/' }}
         FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
         VERSION: ${{ github.event.inputs.version || steps.get_version.outputs.version }}
 
@@ -78,8 +78,8 @@ jobs:
       run: msbuild "EQEmu Patcher/EQEmu Patcher.sln" /p:Configuration=Release /p:Platform="Any CPU"
       env:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
-        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
-        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
+        FILELIST_URL: ${{ github.event.inputs.filelist_url || 'https://godsofnorrath.online/patch/rof/' }}
+        PATCHER_URL: ${{ github.event.inputs.patcher_url || 'https://godsofnorrath.online/patch/rof/' }}
         FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
         VERSION: ${{ github.event.inputs.version || steps.get_version.outputs.version }}
 
@@ -111,4 +111,4 @@ jobs:
         generate_release_notes: false
         make_latest: true
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITH

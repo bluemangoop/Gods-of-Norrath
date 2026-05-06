@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0.2] 2026-05-06
+
+- Updated manifest URL to use domain (godsofnorrath.online) instead of raw IP
+- Updated GitHub Actions build URLs to use domain
+- Added GlobalLoad.txt to patcher whitelist
+
 ## [1.0.0.1] 2026-05-06
 
 - Patcher now downloads manifest from web server instead of GitHub

@@ -517,7 +517,7 @@ namespace EQEmu_Patcher
         //private static readonly string SpireBaseUrl = "http://108.181.218.166/patch/rof/";
 
         // Web server manifest URL for static file patching (auto-generated every 30s)
-        private static readonly string ManifestUrl = "http://108.181.218.166/patch/manifest.json";
+        private static readonly string ManifestUrl = "https://godsofnorrath.online/patch/manifest.json";
 
         // Whitelist of static files to patch from manifest (only these will be downloaded)
         private static readonly HashSet<string> ManifestFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
