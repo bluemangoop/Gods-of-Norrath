@@ -111,4 +111,4 @@ jobs:
         generate_release_notes: false
         make_latest: true
       env:
-        GITH
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
