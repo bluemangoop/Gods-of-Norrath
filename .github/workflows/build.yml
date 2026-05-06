@@ -78,17 +78,17 @@ jobs:
         name: godsofnorrath-release
         path: "EQEmu Patcher/EQEmu Patcher/bin/Release/"
 
-    # Only create a release on push to main (not on pull requests)
+    # Only create a release when manually triggered (workflow_dispatch)
     - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v${{ github.run_number }}
-        name: "v${{ github.run_number }}"
+        tag_name: v${{ github.event.inputs.version || '1.0.0.0' }}
+        name: "v${{ github.event.inputs.version || '1.0.0.0' }}"
         body: |
           Auto-built from commit ${{ github.sha }}
           
-          Built by GitHub Actions run #${{ github.run_number }}
+          Version: ${{ github.event.inputs.version || '1.0.0.0' }}
         files: |
           EQEmu Patcher/EQEmu Patcher/bin/Release/godsofnorrath.exe
         generate_release_notes: false
