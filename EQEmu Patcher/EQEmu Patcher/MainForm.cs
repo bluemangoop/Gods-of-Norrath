@@ -524,6 +524,61 @@ namespace EQEmu_Patcher
             "eqhost.txt"
         };
 
+        // Storyline files to delete during patching
+        private static readonly HashSet<string> StorylineFilesToDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "storyline/storySerpents.txt",
+            "storyline/storyRevelation.txt",
+            "storyline/storyPlea.txt",
+            "storyline/storyMessenger.txt",
+            "storyline/storyMagic.txt",
+            "storyline/storyLanys.txt",
+            "storyline/storyGate.txt",
+            "storyline/storyDarkhollow.txt",
+            "storyline/storyChosen.txt",
+            "storyline/storyAbysmal.txt",
+            "storyline/storyWhispers.txt",
+            "storyline/storyVisions.txt",
+            "storyline/storyUnturned.txt",
+            "storyline/storyTroubled.txt",
+            "storyline/storyTreachery.txt",
+            "storyline/storyStone.txt",
+            "storyline/storyShadow.txt",
+            "storyline/storySeeking.txt",
+            "storyline/storySecrets.txt",
+            "storyline/storySearch.txt",
+            "storyline/storySea.txt",
+            "storyline/storyScholar.txt",
+            "storyline/storyRumor.txt",
+            "storyline/storyRiches.txt",
+            "storyline/storyReunion.txt",
+            "storyline/storyPursuit.txt",
+            "storyline/storyProphecy.txt",
+            "storyline/storyPromise.txt",
+            "storyline/storyPath.txt",
+            "storyline/storyPassage.txt",
+            "storyline/storyPantheon.txt",
+            "storyline/storyNest.txt",
+            "storyline/storyMountains.txt",
+            "storyline/storyMithaniel.txt",
+            "storyline/storyMines.txt",
+            "storyline/storyMinds.txt",
+            "storyline/storyMadman.txt",
+            "storyline/storyJourney.txt",
+            "storyline/storyGrobb.txt",
+            "storyline/storyFires.txt",
+            "storyline/storyFelwithe.txt",
+            "storyline/storyExile.txt",
+            "storyline/storyDawn.txt",
+            "storyline/storyDaughter.txt",
+            "storyline/storyCurrents.txt",
+            "storyline/storyCourse.txt",
+            "storyline/storyBuild.txt",
+            "storyline/storyAmulet.txt",
+            "storyline/storyAgreement.txt",
+            "storyline/storyNektulos.txt"
+        };
+
         private async Task AsyncPatch()
         {
             Stopwatch start = Stopwatch.StartNew();
@@ -744,6 +799,55 @@ namespace EQEmu_Patcher
             catch (Exception ex)
             {
                 StatusLibrary.Log($"  Error checking manifest: {ex.Message}");
+            }
+
+            // ============================================
+            // PHASE 3: Delete storyline files
+            // ============================================
+            StatusLibrary.Log("");
+            StatusLibrary.Log("Cleaning up storyline files...");
+            string eqPath = Path.GetDirectoryName(Application.ExecutablePath);
+            int deletedCount = 0;
+
+            foreach (var storyFile in StorylineFilesToDelete)
+            {
+                if (isPatchCancelled)
+                {
+                    StatusLibrary.Log("Patching cancelled.");
+                    return;
+                }
+
+                string relativePath = storyFile.Replace("/", "\\");
+
+                // Security check: ensure path is within EQ directory
+                if (!UtilityLibrary.IsPathChild(relativePath))
+                {
+                    continue;
+                }
+
+                string localPath = Path.Combine(eqPath, relativePath);
+                try
+                {
+                    if (File.Exists(localPath))
+                    {
+                        File.Delete(localPath);
+                        StatusLibrary.Log($"  Deleted {storyFile}");
+                        deletedCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    StatusLibrary.Log($"  Failed to delete {storyFile}: {ex.Message}");
+                }
+            }
+
+            if (deletedCount == 0)
+            {
+                StatusLibrary.Log("  No storyline files to clean up.");
+            }
+            else
+            {
+                StatusLibrary.Log($"  Deleted {deletedCount} storyline file(s).");
             }
 
             StatusLibrary.SetProgress(10000);
