@@ -22,7 +22,7 @@ on:
       file_name:
         description: 'File Name'
         required: false
-        default: 'godsofnorrath-test.exe'
+        default: 'godsofnorrath.exe'
       version:
         description: 'Version'
         required: false
@@ -54,7 +54,7 @@ jobs:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
-        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath-test' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
     - name: Build (Release)
@@ -63,19 +63,19 @@ jobs:
         SERVER_NAME: ${{ github.event.inputs.server_name || 'Gods of Norrath' }}
         FILELIST_URL: ${{ github.event.inputs.filelist_url || 'http://108.181.218.166/patch/rof/' }}
         PATCHER_URL: ${{ github.event.inputs.patcher_url || 'http://108.181.218.166/patch/rof/' }}
-        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath-test' }}
+        FILE_NAME: ${{ github.event.inputs.file_name || 'godsofnorrath' }}
         VERSION: ${{ github.event.inputs.version || '1.0.0.0' }}
 
     - name: Upload artifact (Debug)
       uses: actions/upload-artifact@v4
       with:
-        name: godsofnorrath-test-debug
+        name: godsofnorrath-debug
         path: "EQEmu Patcher/EQEmu Patcher/bin/Debug/"
 
     - name: Upload artifact (Release)
       uses: actions/upload-artifact@v4
       with:
-        name: godsofnorrath-test-release
+        name: godsofnorrath-release
         path: "EQEmu Patcher/EQEmu Patcher/bin/Release/"
 
     # Only create a release on push to main (not on pull requests)
@@ -90,7 +90,7 @@ jobs:
           
           Built by GitHub Actions run #${{ github.run_number }}
         files: |
-          EQEmu Patcher/EQEmu Patcher/bin/Release/godsofnorrath-test.exe
+          EQEmu Patcher/EQEmu Patcher/bin/Release/godsofnorrath.exe
         generate_release_notes: false
         make_latest: true
       env:
