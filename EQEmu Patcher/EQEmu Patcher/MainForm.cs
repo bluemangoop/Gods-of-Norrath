@@ -340,11 +340,22 @@ namespace EQEmu_Patcher
 
         private void PlayGame()
         {
+            string eqPath = Path.GetDirectoryName(Application.ExecutablePath);
+
+            try
+            {
+                StatusLibrary.Log("Patching eqstr_us.txt deity names...");
+                UtilityLibrary.PatchEqstrDeityNames(eqPath);
+            }
+            catch (Exception err)
+            {
+                StatusLibrary.Log($"Eqstr deity patch skipped: {err.Message}");
+            }
+
             try
             {
                 StatusLibrary.Log("Checking THJ UI...");
                
-                string eqPath = Path.GetDirectoryName(Application.ExecutablePath);
                 var di = new DirectoryInfo(eqPath);
                 var files = di.GetFiles("UI*_thj.ini");
 
@@ -508,6 +519,7 @@ namespace EQEmu_Patcher
             { "Resources\\GlobalLoad.txt","https://godsofnorrath.online/patch/rof/Resources/GlobalLoad.txt" },
             { "dbstr_us.txt",             "https://godsofnorrath.online/patch/rof/dbstr_us.txt" },
             { "spells_us.txt",            "https://godsofnorrath.online/patch/rof/spells_us.txt" },
+            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" }
         };
 
         // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)

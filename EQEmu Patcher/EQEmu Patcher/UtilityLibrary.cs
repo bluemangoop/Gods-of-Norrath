@@ -585,6 +585,94 @@ namespace EQEmu_Patcher
             }
         }
 
+        /// <summary>
+        /// Patches eqstr_us.txt to rename deity strings for alignment system.
+        /// Replaces Agnostic→Neutral, Innoruuk→Evil, Rodcet Nife→Good.
+        /// Does NOT change file length or line count (in-place byte overwrite).
+        /// Safe to run multiple times — checks for sentinel flag file.
+        /// </summary>
+        public static void PatchEqstrDeityNames(string eqDirectory)
+        {
+            string eqstrPath = Path.Combine(eqDirectory, "eqstr_us.txt");
+            string flagPath = Path.Combine(eqDirectory, "eqstr_alignment_patched.flag");
+
+            if (!File.Exists(eqstrPath))
+                return;
+            if (File.Exists(flagPath))
+                return;
+
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(eqstrPath);
+            }
+            catch (Exception ex)
+            {
+                StatusLibrary.Log($"Eqstr patch: Failed to read eqstr_us.txt: {ex.Message}");
+                return;
+            }
+
+            // Each patch entry: (original string, replacement padded to same byte length)
+            var patches = new[] {
+                (Original: "3250 Agnostic",   Repl: "3250 Neutral"),
+                (Original: "3254 Innoruuk",    Repl: "3254 Evil   "),
+                (Original: "3258 Rodcet Nife", Repl: "3258 Good   "),
+            };
+
+            bool changed = false;
+            foreach (var p in patches)
+            {
+                var origBytes = System.Text.Encoding.ASCII.GetBytes(p.Original);
+                var replBytes = System.Text.Encoding.ASCII.GetBytes(p.Repl);
+
+                int idx = IndexOfBytes(bytes, origBytes);
+                if (idx >= 0)
+                {
+                    for (int i = 0; i < origBytes.Length; i++)
+                    {
+                        bytes[idx + i] = (i < replBytes.Length) ? replBytes[i] : (byte)' ';
+                    }
+                    changed = true;
+                    StatusLibrary.Log($"Eqstr patch: \"{p.Original}\" → \"{p.Repl.TrimEnd()}\"");
+                }
+                else
+                {
+                    StatusLibrary.Log($"Eqstr patch: Pattern \"{p.Original}\" not found — skipping");
+                }
+            }
+
+            if (changed)
+            {
+                try
+                {
+                    File.WriteAllBytes(eqstrPath, bytes);
+                    File.WriteAllText(flagPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                    StatusLibrary.Log("Eqstr patch: Alignment deity names patched successfully.");
+                }
+                catch (Exception ex)
+                {
+                    StatusLibrary.Log($"Eqstr patch: Failed to write patched eqstr_us.txt: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Finds first occurrence of needle byte sequence in haystack.
+        /// </summary>
+        private static int IndexOfBytes(byte[] haystack, byte[] needle)
+        {
+            for (int i = 0; i <= haystack.Length - needle.Length; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < needle.Length; j++)
+                {
+                    if (haystack[i + j] != needle[j]) { match = false; break; }
+                }
+                if (match) return i;
+            }
+            return -1;
+        }
+
         #endregion
     }
 }
