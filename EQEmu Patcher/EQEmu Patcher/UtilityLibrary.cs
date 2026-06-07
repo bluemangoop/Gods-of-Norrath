@@ -588,7 +588,7 @@ namespace EQEmu_Patcher
         /// <summary>
         /// Patches eqstr_us.txt to rename deity strings for alignment system.
         /// Replaces Agnostic→Neutral, Innoruuk→Evil, Rodcet Nife→Good.
-        /// Does NOT change file length or line count (in-place byte overwrite).
+        /// Uses line-by-line replacement — no padding needed, preserves file encoding.
         /// Safe to run multiple times — checks for sentinel flag file.
         /// </summary>
         public static void PatchEqstrDeityNames(string eqDirectory)
@@ -601,10 +601,10 @@ namespace EQEmu_Patcher
             if (File.Exists(flagPath))
                 return;
 
-            byte[] bytes;
+            byte[] originalBytes;
             try
             {
-                bytes = File.ReadAllBytes(eqstrPath);
+                originalBytes = File.ReadAllBytes(eqstrPath);
             }
             catch (Exception ex)
             {
@@ -612,32 +612,32 @@ namespace EQEmu_Patcher
                 return;
             }
 
-            // Each patch entry: (original string, replacement padded to same byte length)
-            var patches = new[] {
-                (Original: "3250 Agnostic",   Repl: "3250 Neutral"),
-                (Original: "3254 Innoruuk",    Repl: "3254 Evil   "),
-                (Original: "3258 Rodcet Nife", Repl: "3258 Good   "),
+            // Detect line endings from the original file
+            string content = System.Text.Encoding.ASCII.GetString(originalBytes);
+            string lineEnding = content.Contains("\r\n") ? "\r\n" : "\n";
+
+            var patches = new Dictionary<string, string>
+            {
+                { "3250 Agnostic",   "3250 Neutral" },
+                { "3254 Innoruuk",    "3254 Evil"    },
+                { "3258 Rodcet Nife", "3258 Good"    },
             };
 
+            string[] lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
             bool changed = false;
-            foreach (var p in patches)
-            {
-                var origBytes = System.Text.Encoding.ASCII.GetBytes(p.Original);
-                var replBytes = System.Text.Encoding.ASCII.GetBytes(p.Repl);
 
-                int idx = IndexOfBytes(bytes, origBytes);
-                if (idx >= 0)
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string trimmed = lines[i].TrimEnd('\r', '\n');
+                foreach (var p in patches)
                 {
-                    for (int i = 0; i < origBytes.Length; i++)
+                    if (trimmed == p.Key)
                     {
-                        bytes[idx + i] = (i < replBytes.Length) ? replBytes[i] : (byte)' ';
+                        lines[i] = p.Value;
+                        StatusLibrary.Log($"Eqstr patch: \"{p.Key}\" → \"{p.Value}\"");
+                        changed = true;
+                        break;
                     }
-                    changed = true;
-                    StatusLibrary.Log($"Eqstr patch: \"{p.Original}\" → \"{p.Repl.TrimEnd()}\"");
-                }
-                else
-                {
-                    StatusLibrary.Log($"Eqstr patch: Pattern \"{p.Original}\" not found — skipping");
                 }
             }
 
@@ -645,7 +645,9 @@ namespace EQEmu_Patcher
             {
                 try
                 {
-                    File.WriteAllBytes(eqstrPath, bytes);
+                    string newContent = string.Join(lineEnding, lines);
+                    byte[] newBytes = System.Text.Encoding.ASCII.GetBytes(newContent);
+                    File.WriteAllBytes(eqstrPath, newBytes);
                     File.WriteAllText(flagPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                     StatusLibrary.Log("Eqstr patch: Alignment deity names patched successfully.");
                 }
@@ -654,23 +656,10 @@ namespace EQEmu_Patcher
                     StatusLibrary.Log($"Eqstr patch: Failed to write patched eqstr_us.txt: {ex.Message}");
                 }
             }
-        }
-
-        /// <summary>
-        /// Finds first occurrence of needle byte sequence in haystack.
-        /// </summary>
-        private static int IndexOfBytes(byte[] haystack, byte[] needle)
-        {
-            for (int i = 0; i <= haystack.Length - needle.Length; i++)
+            else
             {
-                bool match = true;
-                for (int j = 0; j < needle.Length; j++)
-                {
-                    if (haystack[i + j] != needle[j]) { match = false; break; }
-                }
-                if (match) return i;
+                StatusLibrary.Log("Eqstr patch: No deity strings found to patch (already done or wrong file version).");
             }
-            return -1;
         }
 
         #endregion
