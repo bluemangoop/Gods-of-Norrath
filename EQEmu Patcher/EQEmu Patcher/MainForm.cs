@@ -519,7 +519,8 @@ namespace EQEmu_Patcher
             { "Resources\\GlobalLoad.txt","https://godsofnorrath.online/patch/rof/Resources/GlobalLoad.txt" },
             { "dbstr_us.txt",             "https://godsofnorrath.online/patch/rof/dbstr_us.txt" },
             { "spells_us.txt",            "https://godsofnorrath.online/patch/rof/spells_us.txt" },
-            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" }
+            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" },
+            { "crushbone_assets.txt",    "https://godsofnorrath.online/patch/rof/crushbone_assets.txt" }
             // { "godsofnorrath.dll",             "https://godsofnorrath.online/patch/rof/godsofnorrath.dll" }
         };
 
