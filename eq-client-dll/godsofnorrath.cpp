@@ -62,7 +62,7 @@ void DebugLog(const char* format, ...) {
 // Version
 // ============================================================================
 
-#define DLL_VERSION "v0.0.3"
+#define DLL_VERSION "v0.0.4"
 
 // ============================================================================
 // Configuration
@@ -85,6 +85,14 @@ const uintptr_t pinstCDBStr_Offset             = 0xD1F380;
 // Mana bar / spell gem unlock offsets (RoF2)
 const uintptr_t CharacterZoneClient_MaxMana_Offset            = 0x581E60;
 const uintptr_t CharacterZoneClient_CanUseSpellSlot_Offset    = 0x433BC0;
+
+// UI creation hook - force spell gem bar creation even for melee classes
+const uintptr_t CDisplay_ZoneMainUI_Offset                    = 0x4891A0;
+const uintptr_t pinstLocalPlayer_Offset                       = 0xDD2630;
+const uintptr_t PlayerClient_GetPcClient_Offset               = 0x58C9A0;
+
+// BaseProfile::max_allowed_spell_slots field offset
+const uintptr_t MaxAllowedSpellSlots_Offset                   = 0x33D8;
 
 
 // ============================================================================
@@ -323,6 +331,67 @@ BYTE g_spell_slot_original_bytes[5] = {0};
 uintptr_t g_spell_slot_func_addr = 0;
 void* g_spell_slot_trampoline = nullptr;
 
+// ZoneMainUI hook globals
+typedef void (__thiscall *ZoneMainUIFunc)(void* pDisplay);
+ZoneMainUIFunc g_original_zone_main_ui = nullptr;
+std::atomic<bool> g_zone_main_ui_hook_installed(false);
+BYTE g_zone_main_ui_original_bytes[5] = {0};
+uintptr_t g_zone_main_ui_func_addr = 0;
+void* g_zone_main_ui_trampoline = nullptr;
+
+// Helper: get current PcProfile pointer from the local player chain
+static void* GetLocalProfile() {
+	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
+	if (!eqgame) return nullptr;
+
+	uintptr_t base = (uintptr_t)eqgame;
+
+	// pinstLocalPlayer -> PlayerClient*
+	void** ppLocalPlayer = (void**)(base + pinstLocalPlayer_Offset);
+	if (!ppLocalPlayer || !*ppLocalPlayer) {
+		DebugLog("GetLocalProfile: pinstLocalPlayer is NULL");
+		return nullptr;
+	}
+
+	// Try calling PlayerClient::GetPcClient() to get the PcClient/PcProfile
+	typedef void* (__thiscall *GetPcClientFunc)(void* pPlayer);
+	GetPcClientFunc getPcClient = (GetPcClientFunc)(base + PlayerClient_GetPcClient_Offset);
+	void* pcClient = getPcClient(*ppLocalPlayer);
+
+	DebugLog("GetLocalProfile: LocalPlayer=0x%p, PcClient=0x%p", *ppLocalPlayer, pcClient);
+	
+	// Fallback: if GetPcClient returned null or the same pointer, try using
+	// the local player directly. Some client versions store the profile inline.
+	if (!pcClient || pcClient == *ppLocalPlayer)
+		return *ppLocalPlayer;
+
+	return pcClient;
+}
+
+// Hooked ZoneMainUI - temporarily forces max_allowed_spell_slots to 12
+// so the client creates spell gem bar, mana bar, and spellbook button.
+void __fastcall HookedZoneMainUI(void* pDisplay, int /*unused_edx*/) {
+	void* profile = GetLocalProfile();
+	int saved = 0;
+	int* maxSlots = nullptr;
+
+	if (profile) {
+		maxSlots = (int*)((uintptr_t)profile + MaxAllowedSpellSlots_Offset);
+		saved = *maxSlots;
+		DebugLog("HookedZoneMainUI: max_allowed_spell_slots was %d, forcing 12", saved);
+		*maxSlots = 12;
+	} else {
+		DebugLog("HookedZoneMainUI: could not get profile, proceeding without override");
+	}
+
+	g_original_zone_main_ui(pDisplay);
+
+	if (profile && maxSlots) {
+		*maxSlots = saved;
+		DebugLog("HookedZoneMainUI: restored max_allowed_spell_slots to %d", saved);
+	}
+}
+
 // ============================================================================
 // Trampoline Helper
 // ============================================================================
@@ -404,8 +473,6 @@ DspChatFunc g_dsp_chat = nullptr;
 
 typedef void (__thiscall* InterpretCmdFunc)(void* this_ptr, void* pChar, const char* szFullLine);
 InterpretCmdFunc g_original_interpret_cmd = nullptr;
-
-const uintptr_t pinstLocalPlayer_Offset = 0xDD2630;
 
 std::string GetPlayerName() {
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
@@ -953,6 +1020,88 @@ void UninstallCanUseSpellSlotHook() {
 	g_spell_slot_hook_installed = false;
 }
 
+bool InstallZoneMainUIHook() {
+	if (g_zone_main_ui_hook_installed.exchange(true)) {
+		DebugLog("InstallZoneMainUIHook: Already installed");
+		return true;
+	}
+
+	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
+	if (!eqgame) {
+		eqgame = GetModuleHandleA(NULL);
+	}
+	if (!eqgame) {
+		DebugLog("InstallZoneMainUIHook: FAILED - cannot get eqgame.exe module handle");
+		g_zone_main_ui_hook_installed = false;
+		return false;
+	}
+
+	uintptr_t base_addr = (uintptr_t)eqgame;
+	g_zone_main_ui_func_addr = base_addr + CDisplay_ZoneMainUI_Offset;
+	DebugLog("InstallZoneMainUIHook: ZoneMainUI at 0x%p (offset 0x%X)",
+		(void*)g_zone_main_ui_func_addr, CDisplay_ZoneMainUI_Offset);
+
+	BYTE first_bytes[10];
+	memcpy(first_bytes, (void*)g_zone_main_ui_func_addr, 5);
+	DebugLog("InstallZoneMainUIHook: First 5 bytes: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
+
+	memcpy(g_zone_main_ui_original_bytes, (void*)g_zone_main_ui_func_addr, 5);
+
+	g_zone_main_ui_trampoline = CreateTrampoline(g_zone_main_ui_original_bytes, g_zone_main_ui_func_addr);
+	if (g_zone_main_ui_trampoline) {
+		g_original_zone_main_ui = (ZoneMainUIFunc)g_zone_main_ui_trampoline;
+		DebugLog("InstallZoneMainUIHook: Trampoline at 0x%p", g_zone_main_ui_trampoline);
+	} else {
+		g_original_zone_main_ui = (ZoneMainUIFunc)g_zone_main_ui_func_addr;
+		DebugLog("InstallZoneMainUIHook: WARNING - no trampoline, using direct address");
+	}
+
+	uintptr_t hook_func_addr = (uintptr_t)&HookedZoneMainUI;
+	DebugLog("InstallZoneMainUIHook: Hook function at 0x%p", (void*)hook_func_addr);
+
+	BYTE jmp_code[10];
+	jmp_code[0] = 0xFF;
+	jmp_code[1] = 0x25;
+	jmp_code[2] = 0x00;
+	jmp_code[3] = 0x00;
+	jmp_code[4] = 0x00;
+	jmp_code[5] = 0x00;
+	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+
+	DWORD old_protect;
+	if (!VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DWORD err = GetLastError();
+		DebugLog("InstallZoneMainUIHook: VirtualProtect failed with error %lu", err);
+		g_zone_main_ui_hook_installed = false;
+		return false;
+	}
+
+	memcpy((void*)g_zone_main_ui_func_addr, jmp_code, 10);
+	VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, old_protect, &old_protect);
+
+	memcpy(first_bytes, (void*)g_zone_main_ui_func_addr, 10);
+	DebugLog("InstallZoneMainUIHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
+		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+
+	return true;
+}
+
+void UninstallZoneMainUIHook() {
+	if (!g_zone_main_ui_hook_installed) return;
+
+	if (g_zone_main_ui_func_addr != 0) {
+		DWORD old_protect;
+		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		memcpy((void*)g_zone_main_ui_func_addr, g_zone_main_ui_original_bytes, 5);
+		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, old_protect, &old_protect);
+		DebugLog("UninstallZoneMainUIHook: Hook removed");
+	}
+
+	g_zone_main_ui_hook_installed = false;
+}
+
 // ============================================================================
 // Custom Command Handler
 // ============================================================================
@@ -1404,6 +1553,13 @@ void InitializeHooks() {
 		DebugLog("InitializeHooks: CanUseSpellSlot hook installed successfully");
 	}
 
+	DebugLog("InitializeHooks: Installing ZoneMainUI hook...");
+	if (!InstallZoneMainUIHook()) {
+		DebugLog("InitializeHooks: FAILED to install ZoneMainUI hook (non-fatal)");
+	} else {
+		DebugLog("InitializeHooks: ZoneMainUI hook installed successfully");
+	}
+
 	DebugLog("InitializeHooks: Initialization complete!");
 
 }
@@ -1457,6 +1613,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			UninstallSendHook();
 			UninstallMaxManaHook();
 			UninstallCanUseSpellSlotHook();
+			UninstallZoneMainUIHook();
 			g_tcp_client.Disconnect();
 			DebugLog("DLL_PROCESS_DETACH: Cleanup complete");
 
