@@ -62,7 +62,7 @@ void DebugLog(const char* format, ...) {
 // Version
 // ============================================================================
 
-#define DLL_VERSION "v0.0.4"
+#define DLL_VERSION "v0.0.5"
 
 // ============================================================================
 // Configuration
@@ -331,6 +331,9 @@ BYTE g_spell_slot_original_bytes[5] = {0};
 uintptr_t g_spell_slot_func_addr = 0;
 void* g_spell_slot_trampoline = nullptr;
 
+// Forward declaration for debug chat output
+void DisplayChatMessage(const char* message);
+
 // ZoneMainUI hook globals
 typedef void (__thiscall *ZoneMainUIFunc)(void* pDisplay);
 ZoneMainUIFunc g_original_zone_main_ui = nullptr;
@@ -340,30 +343,57 @@ uintptr_t g_zone_main_ui_func_addr = 0;
 void* g_zone_main_ui_trampoline = nullptr;
 
 // Helper: get current PcProfile pointer from the local player chain
+// Also tries reading max_allowed_spell_slots to validate the offset
 static void* GetLocalProfile() {
 	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
-	if (!eqgame) return nullptr;
+	if (!eqgame) {
+		DebugLog("GetLocalProfile: eqgame.exe module not found");
+		DisplayChatMessage("[GoN-DEBUG] eqgame.exe not found");
+		return nullptr;
+	}
 
 	uintptr_t base = (uintptr_t)eqgame;
+	char buf[256];
 
 	// pinstLocalPlayer -> PlayerClient*
 	void** ppLocalPlayer = (void**)(base + pinstLocalPlayer_Offset);
 	if (!ppLocalPlayer || !*ppLocalPlayer) {
-		DebugLog("GetLocalProfile: pinstLocalPlayer is NULL");
+		DebugLog("GetLocalProfile: pinstLocalPlayer is NULL (offset 0x%X)", pinstLocalPlayer_Offset);
+		DisplayChatMessage("[GoN-DEBUG] pinstLocalPlayer is NULL");
 		return nullptr;
 	}
+
+	void* localPlayer = *ppLocalPlayer;
+	snprintf(buf, sizeof(buf), "[GoN-DEBUG] LocalPlayer=0x%p", localPlayer);
+	DisplayChatMessage(buf);
 
 	// Try calling PlayerClient::GetPcClient() to get the PcClient/PcProfile
 	typedef void* (__thiscall *GetPcClientFunc)(void* pPlayer);
 	GetPcClientFunc getPcClient = (GetPcClientFunc)(base + PlayerClient_GetPcClient_Offset);
-	void* pcClient = getPcClient(*ppLocalPlayer);
+	void* pcClient = getPcClient(localPlayer);
 
-	DebugLog("GetLocalProfile: LocalPlayer=0x%p, PcClient=0x%p", *ppLocalPlayer, pcClient);
-	
+	snprintf(buf, sizeof(buf), "[GoN-DEBUG] GetPcClient returned 0x%p", pcClient);
+	DisplayChatMessage(buf);
+	DebugLog("GetLocalProfile: LocalPlayer=0x%p, PcClient=0x%p", localPlayer, pcClient);
+
+	// Try reading max_allowed_spell_slots from both pointers to see which is valid
+	void* candidates[2] = { localPlayer, pcClient };
+	for (int i = 0; i < 2; i++) {
+		if (!candidates[i]) continue;
+		int* slots = (int*)((uintptr_t)candidates[i] + MaxAllowedSpellSlots_Offset);
+		if (IsBadReadPtr(slots, sizeof(int))) {
+			snprintf(buf, sizeof(buf), "[GoN-DEBUG] ptr[%d] offset 0x%X = BADPTR", i, (int)MaxAllowedSpellSlots_Offset);
+		} else {
+			int val = *slots;
+			snprintf(buf, sizeof(buf), "[GoN-DEBUG] ptr[%d] offset 0x%X = %d", i, (int)MaxAllowedSpellSlots_Offset, val);
+		}
+		DisplayChatMessage(buf);
+	}
+
 	// Fallback: if GetPcClient returned null or the same pointer, try using
 	// the local player directly. Some client versions store the profile inline.
-	if (!pcClient || pcClient == *ppLocalPlayer)
-		return *ppLocalPlayer;
+	if (!pcClient || pcClient == localPlayer)
+		return localPlayer;
 
 	return pcClient;
 }
@@ -371,16 +401,22 @@ static void* GetLocalProfile() {
 // Hooked ZoneMainUI - temporarily forces max_allowed_spell_slots to 12
 // so the client creates spell gem bar, mana bar, and spellbook button.
 void __fastcall HookedZoneMainUI(void* pDisplay, int /*unused_edx*/) {
+	DisplayChatMessage("[GoN-DEBUG] ZoneMainUI hook fired!");
+
 	void* profile = GetLocalProfile();
 	int saved = 0;
 	int* maxSlots = nullptr;
+	char buf[256];
 
 	if (profile) {
 		maxSlots = (int*)((uintptr_t)profile + MaxAllowedSpellSlots_Offset);
 		saved = *maxSlots;
+		snprintf(buf, sizeof(buf), "[GoN-DEBUG] max_allowed_spell_slots was %d, forcing 12", saved);
+		DisplayChatMessage(buf);
 		DebugLog("HookedZoneMainUI: max_allowed_spell_slots was %d, forcing 12", saved);
 		*maxSlots = 12;
 	} else {
+		DisplayChatMessage("[GoN-DEBUG] GetLocalProfile returned NULL, no override");
 		DebugLog("HookedZoneMainUI: could not get profile, proceeding without override");
 	}
 
@@ -388,6 +424,8 @@ void __fastcall HookedZoneMainUI(void* pDisplay, int /*unused_edx*/) {
 
 	if (profile && maxSlots) {
 		*maxSlots = saved;
+		snprintf(buf, sizeof(buf), "[GoN-DEBUG] restored max_allowed_spell_slots to %d", saved);
+		DisplayChatMessage(buf);
 		DebugLog("HookedZoneMainUI: restored max_allowed_spell_slots to %d", saved);
 	}
 }
@@ -1560,6 +1598,8 @@ void InitializeHooks() {
 		DebugLog("InitializeHooks: ZoneMainUI hook installed successfully");
 	}
 
+	DebugLog("InitializeHooks: All 7 hooks installed (v0.0.5)");
+	DisplayChatMessage("[GoN] v0.0.5 loaded - 7 hooks active");
 	DebugLog("InitializeHooks: Initialization complete!");
 
 }
