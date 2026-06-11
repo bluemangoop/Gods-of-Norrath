@@ -62,7 +62,7 @@ void DebugLog(const char* format, ...) {
 // Version
 // ============================================================================
 
-#define DLL_VERSION "v0.0.5"
+#define DLL_VERSION "v0.0.6"
 
 // ============================================================================
 // Configuration
@@ -461,6 +461,15 @@ void* CreateTrampoline(BYTE* original_bytes, uintptr_t original_addr) {
 	return trampoline;
 }
 
+// Write a 5-byte relative JMP (E9 [rel32]) to jmp_code.
+// This avoids the 10-byte absolute JMP bug where the trampoline only
+// preserved 5 bytes but we overwrote 10, leaving garbage at offset +5.
+static void WriteRelativeJmp(BYTE jmp_code[5], uintptr_t hook_addr, uintptr_t target_addr) {
+	jmp_code[0] = 0xE9;
+	uint32_t rel = (uint32_t)(hook_addr - (target_addr + 5));
+	memcpy(&jmp_code[1], &rel, sizeof(rel));
+}
+
 // ============================================================================
 // CDBStr::GetString Hook
 // ============================================================================
@@ -827,33 +836,25 @@ bool InstallWndNotificationHook() {
 		DebugLog("InstallWndNotificationHook: WARNING - no trampoline, using direct address");
 	}
 
-	uintptr_t hook_func_addr = (uintptr_t)&HookedWndNotification;
-	DebugLog("InstallWndNotificationHook: Hook function at 0x%p", (void*)hook_func_addr);
+	DebugLog("InstallWndNotificationHook: Hook function at 0x%p", (void*)&HookedWndNotification);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedWndNotification, g_wnd_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_wnd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_wnd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallWndNotificationHook: VirtualProtect failed with error %lu", err);
 		g_wnd_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_wnd_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_wnd_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_wnd_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_wnd_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_wnd_func_addr, 10);
-	DebugLog("InstallWndNotificationHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_wnd_func_addr, 5);
+	DebugLog("InstallWndNotificationHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -863,9 +864,9 @@ void UninstallWndNotificationHook() {
 
 	if (g_wnd_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_wnd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_wnd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_wnd_func_addr, g_wnd_original_bytes, 5);
-		VirtualProtect((LPVOID)g_wnd_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_wnd_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallWndNotificationHook: Hook removed");
 	}
 
@@ -924,30 +925,23 @@ bool InstallMaxManaHook() {
 	uintptr_t hook_func_addr = (uintptr_t)&HookedMaxMana;
 	DebugLog("InstallMaxManaHook: Hook function at 0x%p", (void*)hook_func_addr);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedMaxMana, g_max_mana_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_max_mana_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_max_mana_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallMaxManaHook: VirtualProtect failed with error %lu", err);
 		g_max_mana_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_max_mana_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_max_mana_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_max_mana_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_max_mana_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_max_mana_func_addr, 10);
-	DebugLog("InstallMaxManaHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_max_mana_func_addr, 5);
+	DebugLog("InstallMaxManaHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -957,9 +951,9 @@ void UninstallMaxManaHook() {
 
 	if (g_max_mana_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_max_mana_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_max_mana_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_max_mana_func_addr, g_max_mana_original_bytes, 5);
-		VirtualProtect((LPVOID)g_max_mana_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_max_mana_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallMaxManaHook: Hook removed");
 	}
 
@@ -1013,33 +1007,25 @@ bool InstallCanUseSpellSlotHook() {
 		DebugLog("InstallCanUseSpellSlotHook: WARNING - no trampoline, using direct address");
 	}
 
-	uintptr_t hook_func_addr = (uintptr_t)&HookedCanUseSpellSlot;
-	DebugLog("InstallCanUseSpellSlotHook: Hook function at 0x%p", (void*)hook_func_addr);
+	DebugLog("InstallCanUseSpellSlotHook: Hook function at 0x%p", (void*)&HookedCanUseSpellSlot);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedCanUseSpellSlot, g_spell_slot_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_spell_slot_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallCanUseSpellSlotHook: VirtualProtect failed with error %lu", err);
 		g_spell_slot_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_spell_slot_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_spell_slot_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_spell_slot_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_spell_slot_func_addr, 10);
-	DebugLog("InstallCanUseSpellSlotHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_spell_slot_func_addr, 5);
+	DebugLog("InstallCanUseSpellSlotHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -1049,9 +1035,9 @@ void UninstallCanUseSpellSlotHook() {
 
 	if (g_spell_slot_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_spell_slot_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_spell_slot_func_addr, g_spell_slot_original_bytes, 5);
-		VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_spell_slot_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallCanUseSpellSlotHook: Hook removed");
 	}
 
@@ -1095,33 +1081,25 @@ bool InstallZoneMainUIHook() {
 		DebugLog("InstallZoneMainUIHook: WARNING - no trampoline, using direct address");
 	}
 
-	uintptr_t hook_func_addr = (uintptr_t)&HookedZoneMainUI;
-	DebugLog("InstallZoneMainUIHook: Hook function at 0x%p", (void*)hook_func_addr);
+	DebugLog("InstallZoneMainUIHook: Hook function at 0x%p", (void*)&HookedZoneMainUI);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedZoneMainUI, g_zone_main_ui_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallZoneMainUIHook: VirtualProtect failed with error %lu", err);
 		g_zone_main_ui_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_zone_main_ui_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_zone_main_ui_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_zone_main_ui_func_addr, 10);
-	DebugLog("InstallZoneMainUIHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_zone_main_ui_func_addr, 5);
+	DebugLog("InstallZoneMainUIHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -1131,9 +1109,9 @@ void UninstallZoneMainUIHook() {
 
 	if (g_zone_main_ui_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_zone_main_ui_func_addr, g_zone_main_ui_original_bytes, 5);
-		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_zone_main_ui_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallZoneMainUIHook: Hook removed");
 	}
 
@@ -1246,33 +1224,25 @@ bool InstallGetDbStrHook() {
 		DebugLog("InstallGetDbStrHook: WARNING - no trampoline, using direct address");
 	}
 
-	uintptr_t hook_func_addr = (uintptr_t)&HookedGetDbStr;
-	DebugLog("InstallGetDbStrHook: Hook function at 0x%p", (void*)hook_func_addr);
+	DebugLog("InstallGetDbStrHook: Hook function at 0x%p", (void*)&HookedGetDbStr);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedGetDbStr, g_target_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_target_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_target_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallGetDbStrHook: VirtualProtect failed with error %lu", err);
 		g_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_target_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_target_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_target_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_target_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_target_func_addr, 10);
-	DebugLog("InstallGetDbStrHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_target_func_addr, 5);
+	DebugLog("InstallGetDbStrHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -1282,9 +1252,9 @@ void UninstallGetDbStrHook() {
 
 	if (g_target_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_target_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_target_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_target_func_addr, g_original_bytes, 5);
-		VirtualProtect((LPVOID)g_target_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_target_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallGetDbStrHook: Hook removed");
 	}
 
@@ -1332,33 +1302,25 @@ bool InstallCmdHook() {
 		DebugLog("InstallCmdHook: WARNING - no trampoline, using direct address");
 	}
 
-	uintptr_t hook_func_addr = (uintptr_t)&HookedInterpretCmd;
-	DebugLog("InstallCmdHook: Hook function at 0x%p", (void*)hook_func_addr);
+	DebugLog("InstallCmdHook: Hook function at 0x%p", (void*)&HookedInterpretCmd);
 
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedInterpretCmd, g_cmd_func_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)g_cmd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)g_cmd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallCmdHook: VirtualProtect failed with error %lu", err);
 		g_cmd_hook_installed = false;
 		return false;
 	}
 
-	memcpy((void*)g_cmd_func_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)g_cmd_func_addr, 10, old_protect, &old_protect);
+	memcpy((void*)g_cmd_func_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)g_cmd_func_addr, 5, old_protect, &old_protect);
 
-	memcpy(first_bytes, (void*)g_cmd_func_addr, 10);
-	DebugLog("InstallCmdHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
-		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+	memcpy(first_bytes, (void*)g_cmd_func_addr, 5);
+	DebugLog("InstallCmdHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
 
 	return true;
 }
@@ -1368,9 +1330,9 @@ void UninstallCmdHook() {
 
 	if (g_cmd_func_addr != 0) {
 		DWORD old_protect;
-		VirtualProtect((LPVOID)g_cmd_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		VirtualProtect((LPVOID)g_cmd_func_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 		memcpy((void*)g_cmd_func_addr, g_cmd_original_bytes, 5);
-		VirtualProtect((LPVOID)g_cmd_func_addr, 10, old_protect, &old_protect);
+		VirtualProtect((LPVOID)g_cmd_func_addr, 5, old_protect, &old_protect);
 		DebugLog("UninstallCmdHook: Hook removed");
 	}
 
@@ -1488,27 +1450,20 @@ bool InstallSendHook() {
 		DebugLog("InstallSendHook: WARNING - no trampoline, using direct send address");
 	}
 
-	// Write the jump to our hook
-	uintptr_t hook_func_addr = (uintptr_t)&HookedSend;
-	BYTE jmp_code[10];
-	jmp_code[0] = 0xFF;
-	jmp_code[1] = 0x25;
-	jmp_code[2] = 0x00;
-	jmp_code[3] = 0x00;
-	jmp_code[4] = 0x00;
-	jmp_code[5] = 0x00;
-	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+	// Write the jump to our hook (5-byte relative JMP: E9 [rel32])
+	BYTE jmp_code[5];
+	WriteRelativeJmp(jmp_code, (uintptr_t)&HookedSend, send_addr);
 
 	DWORD old_protect;
-	if (!VirtualProtect((LPVOID)send_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+	if (!VirtualProtect((LPVOID)send_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect)) {
 		DWORD err = GetLastError();
 		DebugLog("InstallSendHook: VirtualProtect failed with error %lu", err);
 		g_original_send = (SendFunc)GetProcAddress(ws2_32, "send");
 		return false;
 	}
 
-	memcpy((void*)send_addr, jmp_code, 10);
-	VirtualProtect((LPVOID)send_addr, 10, old_protect, &old_protect);
+	memcpy((void*)send_addr, jmp_code, 5);
+	VirtualProtect((LPVOID)send_addr, 5, old_protect, &old_protect);
 
 	g_send_hook_installed = true;
 	DebugLog("InstallSendHook: SUCCESS - send() hooked at 0x%p", (void*)send_addr);
@@ -1523,11 +1478,11 @@ void UninstallSendHook() {
 		uintptr_t send_addr = (uintptr_t)GetProcAddress(ws2_32, "send");
 		if (send_addr) {
 			DWORD old_protect;
-			VirtualProtect((LPVOID)send_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+			VirtualProtect((LPVOID)send_addr, 5, PAGE_EXECUTE_READWRITE, &old_protect);
 			// Restore first 5 bytes (the original prologue)
 			BYTE original_bytes[5] = {0x8B, 0x4C, 0x24, 0x04, 0x8B}; // Common send prologue
 			memcpy((void*)send_addr, original_bytes, 5);
-			VirtualProtect((LPVOID)send_addr, 10, old_protect, &old_protect);
+			VirtualProtect((LPVOID)send_addr, 5, old_protect, &old_protect);
 			DebugLog("UninstallSendHook: Hook removed from send()");
 		}
 	}
