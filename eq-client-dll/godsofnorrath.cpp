@@ -62,7 +62,7 @@ void DebugLog(const char* format, ...) {
 // Version
 // ============================================================================
 
-#define DLL_VERSION "v0.0.2"
+#define DLL_VERSION "v0.0.3"
 
 // ============================================================================
 // Configuration
@@ -81,6 +81,10 @@ const uintptr_t CEverQuest_dsp_chat_Offset     = 0x51F1A0;
 const uintptr_t CChatWindow_WndNotification_Offset = 0x656640;
 const uintptr_t CDBStr_GetString_Offset        = 0x4866C0;
 const uintptr_t pinstCDBStr_Offset             = 0xD1F380;
+
+// Mana bar / spell gem unlock offsets (RoF2)
+const uintptr_t CharacterZoneClient_MaxMana_Offset            = 0x581E60;
+const uintptr_t CharacterZoneClient_CanUseSpellSlot_Offset    = 0x433BC0;
 
 
 // ============================================================================
@@ -302,6 +306,22 @@ uintptr_t g_cmd_func_addr = 0;
 
 void* g_get_db_str_trampoline = nullptr;
 void* g_interpret_cmd_trampoline = nullptr;
+
+// Max_Mana hook globals
+typedef int (__thiscall *MaxManaFunc)(void* pThis);
+MaxManaFunc g_original_max_mana = nullptr;
+std::atomic<bool> g_max_mana_hook_installed(false);
+BYTE g_max_mana_original_bytes[5] = {0};
+uintptr_t g_max_mana_func_addr = 0;
+void* g_max_mana_trampoline = nullptr;
+
+// CanUseMemorizedSpellSlot hook globals
+typedef bool (__thiscall *CanUseSpellSlotFunc)(void* pThis, int slot);
+CanUseSpellSlotFunc g_original_can_use_spell_slot = nullptr;
+std::atomic<bool> g_spell_slot_hook_installed(false);
+BYTE g_spell_slot_original_bytes[5] = {0};
+uintptr_t g_spell_slot_func_addr = 0;
+void* g_spell_slot_trampoline = nullptr;
 
 // ============================================================================
 // Trampoline Helper
@@ -748,6 +768,192 @@ void UninstallWndNotificationHook() {
 }
 
 // ============================================================================
+// Max_Mana Hook - forces non-zero mana so the mana bar renders for all classes
+// ============================================================================
+// Offset: CharacterZoneClient__Max_Mana_x = 0x581E60
+
+int __fastcall HookedMaxMana(void* pThis, int /*unused_edx*/) {
+	int result = g_original_max_mana(pThis);
+	if (result <= 0)
+		return 100;
+	return result;
+}
+
+bool InstallMaxManaHook() {
+	if (g_max_mana_hook_installed.exchange(true)) {
+		DebugLog("InstallMaxManaHook: Already installed");
+		return true;
+	}
+
+	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
+	if (!eqgame) {
+		eqgame = GetModuleHandleA(NULL);
+	}
+	if (!eqgame) {
+		DebugLog("InstallMaxManaHook: FAILED - cannot get eqgame.exe module handle");
+		g_max_mana_hook_installed = false;
+		return false;
+	}
+
+	uintptr_t base_addr = (uintptr_t)eqgame;
+	g_max_mana_func_addr = base_addr + CharacterZoneClient_MaxMana_Offset;
+	DebugLog("InstallMaxManaHook: Max_Mana at 0x%p (offset 0x%X)",
+		(void*)g_max_mana_func_addr, CharacterZoneClient_MaxMana_Offset);
+
+	BYTE first_bytes[10];
+	memcpy(first_bytes, (void*)g_max_mana_func_addr, 5);
+	DebugLog("InstallMaxManaHook: First 5 bytes: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
+
+	memcpy(g_max_mana_original_bytes, (void*)g_max_mana_func_addr, 5);
+
+	g_max_mana_trampoline = CreateTrampoline(g_max_mana_original_bytes, g_max_mana_func_addr);
+	if (g_max_mana_trampoline) {
+		g_original_max_mana = (MaxManaFunc)g_max_mana_trampoline;
+		DebugLog("InstallMaxManaHook: Trampoline at 0x%p", g_max_mana_trampoline);
+	} else {
+		g_original_max_mana = (MaxManaFunc)g_max_mana_func_addr;
+		DebugLog("InstallMaxManaHook: WARNING - no trampoline, using direct address");
+	}
+
+	uintptr_t hook_func_addr = (uintptr_t)&HookedMaxMana;
+	DebugLog("InstallMaxManaHook: Hook function at 0x%p", (void*)hook_func_addr);
+
+	BYTE jmp_code[10];
+	jmp_code[0] = 0xFF;
+	jmp_code[1] = 0x25;
+	jmp_code[2] = 0x00;
+	jmp_code[3] = 0x00;
+	jmp_code[4] = 0x00;
+	jmp_code[5] = 0x00;
+	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+
+	DWORD old_protect;
+	if (!VirtualProtect((LPVOID)g_max_mana_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DWORD err = GetLastError();
+		DebugLog("InstallMaxManaHook: VirtualProtect failed with error %lu", err);
+		g_max_mana_hook_installed = false;
+		return false;
+	}
+
+	memcpy((void*)g_max_mana_func_addr, jmp_code, 10);
+	VirtualProtect((LPVOID)g_max_mana_func_addr, 10, old_protect, &old_protect);
+
+	memcpy(first_bytes, (void*)g_max_mana_func_addr, 10);
+	DebugLog("InstallMaxManaHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
+		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+
+	return true;
+}
+
+void UninstallMaxManaHook() {
+	if (!g_max_mana_hook_installed) return;
+
+	if (g_max_mana_func_addr != 0) {
+		DWORD old_protect;
+		VirtualProtect((LPVOID)g_max_mana_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		memcpy((void*)g_max_mana_func_addr, g_max_mana_original_bytes, 5);
+		VirtualProtect((LPVOID)g_max_mana_func_addr, 10, old_protect, &old_protect);
+		DebugLog("UninstallMaxManaHook: Hook removed");
+	}
+
+	g_max_mana_hook_installed = false;
+}
+
+// ============================================================================
+// CanUseMemorizedSpellSlot Hook - unlocks all spell gems for every class
+// ============================================================================
+// Offset: CharacterZoneClient__CanUseMemorizedSpellSlot_x = 0x433BC0
+// Original returns true only if the character's class allows that spell gem slot.
+
+bool __fastcall HookedCanUseSpellSlot(void* pThis, int /*unused_edx*/, int slot) {
+	return true;
+}
+
+bool InstallCanUseSpellSlotHook() {
+	if (g_spell_slot_hook_installed.exchange(true)) {
+		DebugLog("InstallCanUseSpellSlotHook: Already installed");
+		return true;
+	}
+
+	HMODULE eqgame = GetModuleHandleA("eqgame.exe");
+	if (!eqgame) {
+		eqgame = GetModuleHandleA(NULL);
+	}
+	if (!eqgame) {
+		DebugLog("InstallCanUseSpellSlotHook: FAILED - cannot get eqgame.exe module handle");
+		g_spell_slot_hook_installed = false;
+		return false;
+	}
+
+	uintptr_t base_addr = (uintptr_t)eqgame;
+	g_spell_slot_func_addr = base_addr + CharacterZoneClient_CanUseSpellSlot_Offset;
+	DebugLog("InstallCanUseSpellSlotHook: CanUseSpellSlot at 0x%p (offset 0x%X)",
+		(void*)g_spell_slot_func_addr, CharacterZoneClient_CanUseSpellSlot_Offset);
+
+	BYTE first_bytes[10];
+	memcpy(first_bytes, (void*)g_spell_slot_func_addr, 5);
+	DebugLog("InstallCanUseSpellSlotHook: First 5 bytes: %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4]);
+
+	memcpy(g_spell_slot_original_bytes, (void*)g_spell_slot_func_addr, 5);
+
+	g_spell_slot_trampoline = CreateTrampoline(g_spell_slot_original_bytes, g_spell_slot_func_addr);
+	if (g_spell_slot_trampoline) {
+		g_original_can_use_spell_slot = (CanUseSpellSlotFunc)g_spell_slot_trampoline;
+		DebugLog("InstallCanUseSpellSlotHook: Trampoline at 0x%p", g_spell_slot_trampoline);
+	} else {
+		g_original_can_use_spell_slot = (CanUseSpellSlotFunc)g_spell_slot_func_addr;
+		DebugLog("InstallCanUseSpellSlotHook: WARNING - no trampoline, using direct address");
+	}
+
+	uintptr_t hook_func_addr = (uintptr_t)&HookedCanUseSpellSlot;
+	DebugLog("InstallCanUseSpellSlotHook: Hook function at 0x%p", (void*)hook_func_addr);
+
+	BYTE jmp_code[10];
+	jmp_code[0] = 0xFF;
+	jmp_code[1] = 0x25;
+	jmp_code[2] = 0x00;
+	jmp_code[3] = 0x00;
+	jmp_code[4] = 0x00;
+	jmp_code[5] = 0x00;
+	memcpy(&jmp_code[6], &hook_func_addr, sizeof(hook_func_addr));
+
+	DWORD old_protect;
+	if (!VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		DWORD err = GetLastError();
+		DebugLog("InstallCanUseSpellSlotHook: VirtualProtect failed with error %lu", err);
+		g_spell_slot_hook_installed = false;
+		return false;
+	}
+
+	memcpy((void*)g_spell_slot_func_addr, jmp_code, 10);
+	VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, old_protect, &old_protect);
+
+	memcpy(first_bytes, (void*)g_spell_slot_func_addr, 10);
+	DebugLog("InstallCanUseSpellSlotHook: SUCCESS - bytes after hook: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		first_bytes[0], first_bytes[1], first_bytes[2], first_bytes[3], first_bytes[4],
+		first_bytes[5], first_bytes[6], first_bytes[7], first_bytes[8], first_bytes[9]);
+
+	return true;
+}
+
+void UninstallCanUseSpellSlotHook() {
+	if (!g_spell_slot_hook_installed) return;
+
+	if (g_spell_slot_func_addr != 0) {
+		DWORD old_protect;
+		VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, PAGE_EXECUTE_READWRITE, &old_protect);
+		memcpy((void*)g_spell_slot_func_addr, g_spell_slot_original_bytes, 5);
+		VirtualProtect((LPVOID)g_spell_slot_func_addr, 10, old_protect, &old_protect);
+		DebugLog("UninstallCanUseSpellSlotHook: Hook removed");
+	}
+
+	g_spell_slot_hook_installed = false;
+}
+
+// ============================================================================
 // Custom Command Handler
 // ============================================================================
 //
@@ -1184,6 +1390,20 @@ void InitializeHooks() {
 		DebugLog("InitializeHooks: WndNotification hook installed successfully");
 	}
 
+	DebugLog("InitializeHooks: Installing Max_Mana hook...");
+	if (!InstallMaxManaHook()) {
+		DebugLog("InitializeHooks: FAILED to install Max_Mana hook (non-fatal)");
+	} else {
+		DebugLog("InitializeHooks: Max_Mana hook installed successfully");
+	}
+
+	DebugLog("InitializeHooks: Installing CanUseSpellSlot hook...");
+	if (!InstallCanUseSpellSlotHook()) {
+		DebugLog("InitializeHooks: FAILED to install CanUseSpellSlot hook (non-fatal)");
+	} else {
+		DebugLog("InitializeHooks: CanUseSpellSlot hook installed successfully");
+	}
+
 	DebugLog("InitializeHooks: Initialization complete!");
 
 }
@@ -1235,6 +1455,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			UninstallCmdHook();
 			UninstallWndNotificationHook();
 			UninstallSendHook();
+			UninstallMaxManaHook();
+			UninstallCanUseSpellSlotHook();
 			g_tcp_client.Disconnect();
 			DebugLog("DLL_PROCESS_DETACH: Cleanup complete");
 
