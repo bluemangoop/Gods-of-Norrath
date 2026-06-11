@@ -519,8 +519,8 @@ namespace EQEmu_Patcher
             { "Resources\\GlobalLoad.txt","https://godsofnorrath.online/patch/rof/Resources/GlobalLoad.txt" },
             { "dbstr_us.txt",             "https://godsofnorrath.online/patch/rof/dbstr_us.txt" },
             { "spells_us.txt",            "https://godsofnorrath.online/patch/rof/spells_us.txt" },
-            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" },
-            { "godsofnorrath.dll",             "https://godsofnorrath.online/patch/rof/godsofnorrath.dll" }
+            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" }
+            // { "godsofnorrath.dll",             "https://godsofnorrath.online/patch/rof/godsofnorrath.dll" }
         };
 
         // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)
