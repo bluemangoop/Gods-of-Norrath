@@ -195,7 +195,7 @@ namespace EQEmu_Patcher
             // No filelist needed - we download directly from Spire each time
             isLoading = false;
             
-            var path = System.IO.Path.GetDirectoryName(Application.ExecutablePath) + "\\eqemupatcher.png";
+            var path = System.IO.Path.GetDirectoryName(Application.ExecutablePath) + "\\coirnav1.png";
             if (File.Exists(path))
             {
                 splashLogo.Load(path);
@@ -293,7 +293,7 @@ namespace EQEmu_Patcher
                     case "513FDC2B5CC63898D7962F0985D5C207": // aslr checksum removed
                     case "26DC13388395A20B73E1B5A08415B0F8": // Legacy of Norrath Custom RoF2 Client https://github.com/xackery/eqemupatcher/issues/16
                         currentVersion = VersionTypes.Rain_Of_Fear_2;
-                        splashLogo.Image = Properties.Resources.rof;
+                        splashLogo.Image = Properties.Resources.coirnav1;
                         break;
                     default:
                         currentVersion = VersionTypes.Unknown;
