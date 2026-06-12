@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -632,8 +633,8 @@ namespace EQEmu_Patcher
                     {
                         try
                         {
-                            string localCompound = ComputeCompoundHash(extractDir);
-                            if (!localCompound.Equals(arch.Value.contentsHash, StringComparison.OrdinalIgnoreCase))
+                            string localState = ComputeStateHash(extractDir);
+                            if (!localState.Equals(arch.Value.stateHash, StringComparison.OrdinalIgnoreCase))
                                 needsDownload = true;
                         }
                         catch { needsDownload = true; }
@@ -789,23 +790,27 @@ namespace EQEmu_Patcher
         }
 
         /// <summary>
-        /// Compute a compound xxhash64 over all files in a directory.
-        /// Formula: xxhash64("relpath1 FILEHASH1\\nrelpath2 FILEHASH2\\n...")
-        /// Matches the server-side compute_compound_hash() in generate_manifest.py.
+        /// Compute an MD5 state hash of all files in a directory (names + sizes).
+        /// Formula: md5("relpath1:size1\nrelpath2:size2\n...")
+        /// Matches the server-side compute_maps_state() in generate_manifest.py.
         /// </summary>
-        private static string ComputeCompoundHash(string directory)
+        private static string ComputeStateHash(string directory)
         {
             var entries = new List<string>();
             var files = Directory.GetFiles(directory, "*", SearchOption.AllDirectories);
             foreach (var filePath in files)
             {
                 string relPath = filePath.Substring(directory.Length + 1).Replace("\\", "/");
-                string fhash = XXHash64.ComputeFileHash(filePath);
-                entries.Add(relPath + " " + fhash);
+                long sz = new FileInfo(filePath).Length;
+                entries.Add(relPath + ":" + sz);
             }
             entries.Sort(StringComparer.Ordinal);
             string combined = string.Join("\n", entries);
-            return XXHash64.ComputeHashString(Encoding.UTF8.GetBytes(combined));
+            using (var md5 = MD5.Create())
+            {
+                byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes(combined));
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
         }
 
         private string generateSize(double size) {
@@ -859,7 +864,7 @@ namespace EQEmu_Patcher
     public class ArchiveEntry
     {
         public int size { get; set; }
-        public string contentsHash { get; set; }
+        public string stateHash { get; set; }
         public string extractTo { get; set; }
     }
 
