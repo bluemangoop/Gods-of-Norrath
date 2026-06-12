@@ -27,7 +27,7 @@
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
     <ApplicationRevision>0</ApplicationRevision>
-    <ApplicationVersion>1.0.0.16</ApplicationVersion>
+    <ApplicationVersion>1.0.0.17</ApplicationVersion>
 
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <UseApplicationTrust>false</UseApplicationTrust>
@@ -91,7 +91,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ClientVersion.cs" />
-    <Compile Include="DefaultUI.cs" />
     <Compile Include="FileListUrl.cs" />
     <Compile Include="FileName.cs" />
     <Compile Include="IniLibrary.cs" />

@@ -360,58 +360,6 @@ namespace EQEmu_Patcher
 
             try
             {
-                StatusLibrary.Log("Checking THJ UI...");
-               
-                var di = new DirectoryInfo(eqPath);
-                var files = di.GetFiles("UI*_thj.ini");
-
-                foreach (var file in files)
-                {
-                    if (file.Length > 10240)
-                    {
-                        continue;
-                    }
-                    StatusLibrary.Log("Found corrupted UI file: " + file.Name);
-                    string bakFile = file.FullName + ".bak";
-                    if (File.Exists(bakFile))
-                    {
-                        if (MessageBox.Show($"UI file {file.Name} appears to be corrupted. Would you like to restore the backup?", "Restore Backup", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                        {
-                            File.Copy(bakFile, file.FullName, true);
-                        }
-                        continue;
-                    }
-                    if (MessageBox.Show($"UI file {file.Name} appears to be corrupted. Would you like to restore the default UI?", "Restore Default", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                    {
-                        File.WriteAllText(file.FullName, DefaultUI.String());
-                    }
-                }
-
-
-                // now just back up all the UI files
-                foreach (var file in files)
-                {
-                    if (file.Length < 10240)
-                    {
-                        continue;
-                    }
-                    string bakFile = file.FullName + ".bak";                   
-                    // force overwrite ther existing file
-                    if (File.Exists(bakFile))
-                    {
-                        File.Delete(bakFile);
-                    }
-                    File.Copy(file.FullName, bakFile);
-                }
-                StatusLibrary.Log("THJ UI check complete.");
-            }
-            catch (Exception err) 
-            {
-                MessageBox.Show("An error occured while trying to check UI files: " + err.Message);
-            }
-
-            try
-            {
                 process = UtilityLibrary.StartEverquest();
                 if (process != null)
                 {
