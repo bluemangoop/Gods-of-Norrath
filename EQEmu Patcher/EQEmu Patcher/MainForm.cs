@@ -629,15 +629,31 @@ namespace EQEmu_Patcher
                     {
                         needsDownload = true;
                     }
-                    else
+                    else if (arch.Value.files != null)
                     {
-                        try
+                        foreach (var f in arch.Value.files)
                         {
-                            string localState = ComputeStateHash(extractDir);
-                            if (!localState.Equals(arch.Value.stateHash, StringComparison.OrdinalIgnoreCase))
+                            string localFile = Path.Combine(extractDir, f.Key.Replace("/", "\\"));
+                            if (!File.Exists(localFile))
+                            {
                                 needsDownload = true;
+                                break;
+                            }
+                            try
+                            {
+                                string localHash = XXHash64.ComputeFileHash(localFile);
+                                if (!localHash.Equals(f.Value, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    needsDownload = true;
+                                    break;
+                                }
+                            }
+                            catch
+                            {
+                                needsDownload = true;
+                                break;
+                            }
                         }
-                        catch { needsDownload = true; }
                     }
 
                     if (needsDownload)
@@ -789,30 +805,6 @@ namespace EQEmu_Patcher
         {
         }
 
-        /// <summary>
-        /// Compute an MD5 state hash of all files in a directory (names + sizes).
-        /// Formula: md5("relpath1:size1\nrelpath2:size2\n...")
-        /// Matches the server-side compute_maps_state() in generate_manifest.py.
-        /// </summary>
-        private static string ComputeStateHash(string directory)
-        {
-            var entries = new List<string>();
-            var files = Directory.GetFiles(directory, "*", SearchOption.AllDirectories);
-            foreach (var filePath in files)
-            {
-                string relPath = filePath.Substring(directory.Length + 1).Replace("\\", "/");
-                long sz = new FileInfo(filePath).Length;
-                entries.Add(relPath + ":" + sz);
-            }
-            entries.Sort(StringComparer.Ordinal);
-            string combined = string.Join("\n", entries);
-            using (var md5 = MD5.Create())
-            {
-                byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes(combined));
-                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-            }
-        }
-
         private string generateSize(double size) {
             if (size < 1024) {
                 return $"{Math.Round(size, 2)} bytes";
@@ -864,8 +856,8 @@ namespace EQEmu_Patcher
     public class ArchiveEntry
     {
         public int size { get; set; }
-        public string stateHash { get; set; }
         public string extractTo { get; set; }
+        public Dictionary<string, string> files { get; set; }
     }
 
 }
