@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Web.Script.Serialization;
@@ -611,7 +612,7 @@ namespace EQEmu_Patcher
             StatusLibrary.Log($"  {skipped} files up to date, {downloadQueue.Count} files need download.");
 
             // ============================================
-            // PHASE 2b: Compare archive entries against local
+            // PHASE 2b: Compare archive entries against local extracted files
             // ============================================
             var archiveQueue = new List<KeyValuePair<string, ArchiveEntry>>();
             if (manifest.archives != null)
@@ -620,9 +621,10 @@ namespace EQEmu_Patcher
                 {
                     if (isPatchCancelled) { StatusLibrary.Log("Patching cancelled."); return; }
 
-                    string localArchive = Path.Combine(basePath, arch.Key);
+                    string extractDir = Path.Combine(basePath, arch.Value.extractTo.Replace("/", "\\"));
                     bool needsDownload = false;
-                    if (!File.Exists(localArchive))
+
+                    if (!Directory.Exists(extractDir))
                     {
                         needsDownload = true;
                     }
@@ -630,8 +632,8 @@ namespace EQEmu_Patcher
                     {
                         try
                         {
-                            string localHash = XXHash64.ComputeFileHash(localArchive);
-                            if (!localHash.Equals(arch.Value.hash, StringComparison.OrdinalIgnoreCase))
+                            string localCompound = ComputeCompoundHash(extractDir);
+                            if (!localCompound.Equals(arch.Value.contentsHash, StringComparison.OrdinalIgnoreCase))
                                 needsDownload = true;
                         }
                         catch { needsDownload = true; }
@@ -785,6 +787,26 @@ namespace EQEmu_Patcher
         {
         }
 
+        /// <summary>
+        /// Compute a compound xxhash64 over all files in a directory.
+        /// Formula: xxhash64("relpath1 FILEHASH1\\nrelpath2 FILEHASH2\\n...")
+        /// Matches the server-side compute_compound_hash() in generate_manifest.py.
+        /// </summary>
+        private static string ComputeCompoundHash(string directory)
+        {
+            var entries = new List<string>();
+            var files = Directory.GetFiles(directory, "*", SearchOption.AllDirectories);
+            foreach (var filePath in files)
+            {
+                string relPath = filePath.Substring(directory.Length + 1).Replace("\\", "/");
+                string fhash = XXHash64.ComputeFileHash(filePath);
+                entries.Add(relPath + " " + fhash);
+            }
+            entries.Sort();
+            string combined = string.Join("\n", entries);
+            return XXHash64.ComputeHashString(Encoding.UTF8.GetBytes(combined));
+        }
+
         private string generateSize(double size) {
             if (size < 1024) {
                 return $"{Math.Round(size, 2)} bytes";
@@ -836,7 +858,7 @@ namespace EQEmu_Patcher
     public class ArchiveEntry
     {
         public int size { get; set; }
-        public string hash { get; set; }
+        public string contentsHash { get; set; }
         public string extractTo { get; set; }
     }
 
