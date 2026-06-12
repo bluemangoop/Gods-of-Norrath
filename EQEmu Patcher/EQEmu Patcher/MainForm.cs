@@ -322,7 +322,7 @@ namespace EQEmu_Patcher
             }
             */
             currentVersion = VersionTypes.Rain_Of_Fear_2;
-            splashLogo.Image = Properties.Resources.rof;
+            splashLogo.Image = Properties.Resources.coirnav1;
         }
 
         //Build out all client version's dictionary
