@@ -802,7 +802,7 @@ namespace EQEmu_Patcher
                 string fhash = XXHash64.ComputeFileHash(filePath);
                 entries.Add(relPath + " " + fhash);
             }
-            entries.Sort();
+            entries.Sort(StringComparer.Ordinal);
             string combined = string.Join("\n", entries);
             return XXHash64.ComputeHashString(Encoding.UTF8.GetBytes(combined));
         }
