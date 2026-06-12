@@ -734,7 +734,7 @@ namespace EQEmu_Patcher
                                 string extractDir = Path.Combine(basePath, archEntry.extractTo.Replace("/", "\\"));
                                 StatusLibrary.Log($"  Extracting to {archEntry.extractTo}...");
                                 Directory.CreateDirectory(extractDir);
-                                ZipFile.ExtractToDirectory(localArchive, extractDir);
+                                ZipFile.ExtractToDirectory(localArchive, extractDir, true);
                                 File.Delete(localArchive);
                                 totalFilesDownloaded++;
                                 StatusLibrary.Log($"  {archName} extracted and deleted.");
