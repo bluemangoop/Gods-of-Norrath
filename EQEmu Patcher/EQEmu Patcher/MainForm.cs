@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Web.Script.Serialization;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Microsoft.WindowsAPICodePack.Taskbar;
@@ -509,26 +512,8 @@ namespace EQEmu_Patcher
             });
         }
 
-        // Hardcoded list of files to download from the web server.
-        // Key = local relative path (where to save in EQ directory)
-        // Value = URL path on the file server
-        private static readonly Dictionary<string, string> StaticFilesToDownload = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "Resources\\BaseData.txt",  "https://godsofnorrath.online/patch/rof/Resources/BaseData.txt" },
-            { "Resources\\SkillCaps.txt", "https://godsofnorrath.online/patch/rof/Resources/SkillCaps.txt" },
-            { "Resources\\GlobalLoad.txt","https://godsofnorrath.online/patch/rof/Resources/GlobalLoad.txt" },
-            { "dbstr_us.txt",             "https://godsofnorrath.online/patch/rof/dbstr_us.txt" },
-            { "spells_us.txt",            "https://godsofnorrath.online/patch/rof/spells_us.txt" },
-            { "storyline\\storyMasteries.txt", "https://godsofnorrath.online/patch/rof/storyline/storyMasteries.txt" },
-            { "crushbone_assets.txt",    "https://godsofnorrath.online/patch/rof/crushbone_assets.txt" }
-            // { "godsofnorrath.dll",             "https://godsofnorrath.online/patch/rof/godsofnorrath.dll" }
-        };
-
-        // Storyline files to keep (all other .txt files in the storyline folder will be moved to old/)
-        private static readonly HashSet<string> StorylineFilesWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "storyMasteries.txt"
-        };
+        // Manifest URL — describes all available patch files with xxhash64 integrity
+        private const string MANIFEST_URL = "https://godsofnorrath.online/patch/manifest.json";
 
         private async Task AsyncPatch()
         {
@@ -540,18 +525,43 @@ namespace EQEmu_Patcher
             int totalFilesDownloaded = 0;
 
             // ============================================
-            // PHASE 1: Download static files from web server
-            // Files are downloaded unconditionally from hardcoded URLs
+            // PHASE 1: Download manifest.json
             // ============================================
             StatusLibrary.Log("");
-            StatusLibrary.Log("Downloading static files from web server...");
+            StatusLibrary.Log("Downloading file manifest...");
 
+            string manifestUrl = MANIFEST_URL;
+            Manifest manifest = null;
             string basePath = Path.GetDirectoryName(Application.ExecutablePath);
-            int staticFileCount = 0;
-            int staticFileTotal = StaticFilesToDownload.Count;
-            int staticFileIndex = 0;
 
-            foreach (var kvp in StaticFilesToDownload)
+            try
+            {
+                using (var wc = new WebClient())
+                {
+                    string json = await wc.DownloadStringTaskAsync(manifestUrl);
+                    var serializer = new JavaScriptSerializer();
+                    manifest = serializer.Deserialize<Manifest>(json);
+                }
+                StatusLibrary.Log($"  Manifest loaded: {manifest.files.Count} files available.");
+            }
+            catch (Exception ex)
+            {
+                StatusLibrary.Log($"  Failed to download manifest: {ex.Message}");
+                StatusLibrary.Log("  Please check your internet connection and try again.");
+                return;
+            }
+
+            // ============================================
+            // PHASE 2: Compare local files against manifest
+            // ============================================
+            StatusLibrary.Log("");
+            StatusLibrary.Log("Comparing local files...");
+
+            var downloadQueue = new List<KeyValuePair<string, ManifestFile>>();
+            int compared = 0;
+            int fileTotal = manifest.files.Count;
+
+            foreach (var kvp in manifest.files)
             {
                 if (isPatchCancelled)
                 {
@@ -559,70 +569,58 @@ namespace EQEmu_Patcher
                     return;
                 }
 
-                string localRelativePath = kvp.Key;
-                string downloadUrl = kvp.Value;
-                string displayName = Path.GetFileName(localRelativePath);
+                string relativePath = kvp.Key.Replace("/", "\\");
+                string localPath = Path.Combine(basePath, relativePath);
+                var manifestFile = kvp.Value;
+                bool needsDownload = false;
 
-                // Security check: ensure path is within EQ directory
-                if (!UtilityLibrary.IsPathChild(localRelativePath))
+                if (!File.Exists(localPath))
                 {
-                    StatusLibrary.Log($"  Skipping {displayName} (invalid path)");
-                    staticFileIndex++;
-                    continue;
+                    needsDownload = true;
                 }
-
-                try
+                else
                 {
-                    StatusLibrary.Log($"  Downloading {displayName}...");
-                    string result = await DownloadFile(cts, downloadUrl, localRelativePath);
-                    if (string.IsNullOrEmpty(result))
+                    try
                     {
-                        string localPath = Path.Combine(basePath, localRelativePath);
-                        if (File.Exists(localPath))
+                        string localHash = XXHash64.ComputeFileHash(localPath);
+                        if (!localHash.Equals(manifestFile.hash, StringComparison.OrdinalIgnoreCase))
                         {
-                            var fileInfo = new FileInfo(localPath);
-                            totalBytes += fileInfo.Length;
+                            needsDownload = true;
                         }
-                        staticFileCount++;
-                        totalFilesDownloaded++;
-                        StatusLibrary.Log($"    {displayName} updated");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        StatusLibrary.Log($"    Failed: {result}");
+                        // File read error — treat as missing
+                        StatusLibrary.Log($"  Warning: could not read {relativePath}: {ex.Message}");
+                        needsDownload = true;
                     }
                 }
-                catch (Exception ex)
+
+                if (needsDownload)
                 {
-                    StatusLibrary.Log($"    Failed to download {displayName}: {ex.Message}");
+                    downloadQueue.Add(kvp);
                 }
 
-                staticFileIndex++;
-                // Progress: 0-70% for downloading files
-                StatusLibrary.SetProgress((int)((staticFileIndex / (double)staticFileTotal) * 7000));
+                compared++;
+                // Progress: 0-30% for comparing
+                StatusLibrary.SetProgress((int)((compared / (double)fileTotal) * 3000));
             }
 
-            if (staticFileCount > 0)
-            {
-                StatusLibrary.Log($"  Downloaded {staticFileCount} static file(s).");
-            }
+            int skipped = fileTotal - downloadQueue.Count;
+            StatusLibrary.Log($"  {skipped} files up to date, {downloadQueue.Count} files need download.");
 
             // ============================================
-            // PHASE 2: Move non-whitelisted storyline .txt files to old/ folder
+            // PHASE 3: Download queued files
             // ============================================
-            StatusLibrary.Log("");
-            StatusLibrary.Log("Cleaning up storyline files...");
-            string eqPath = Path.GetDirectoryName(Application.ExecutablePath);
-            string storylineDir = Path.Combine(eqPath, "storyline");
-            string oldDir = Path.Combine(storylineDir, "old");
-            int movedCount = 0;
-
-            if (Directory.Exists(storylineDir))
+            if (downloadQueue.Count > 0)
             {
-                // Get all .txt files in the storyline folder (not in subdirectories)
-                var txtFiles = Directory.GetFiles(storylineDir, "*.txt", SearchOption.TopDirectoryOnly);
+                StatusLibrary.Log("");
+                StatusLibrary.Log($"Downloading {downloadQueue.Count} file(s)...");
 
-                foreach (var filePath in txtFiles)
+                string filesUrlPrefix = manifest.filesUrlPrefix;
+                int downloadIndex = 0;
+
+                foreach (var kvp in downloadQueue)
                 {
                     if (isPatchCancelled)
                     {
@@ -630,55 +628,40 @@ namespace EQEmu_Patcher
                         return;
                     }
 
-                    string fileName = Path.GetFileName(filePath);
-
-                    // Skip whitelisted files
-                    if (StorylineFilesWhitelist.Contains(fileName))
-                    {
-                        continue;
-                    }
-
-                    // Security check: ensure path is within EQ directory
-                    string relativePath = "storyline\\" + fileName;
-                    if (!UtilityLibrary.IsPathChild(relativePath))
-                    {
-                        continue;
-                    }
+                    string relativePath = kvp.Key;
+                    string localRelativePath = relativePath.Replace("/", "\\");
+                    string downloadUrl = filesUrlPrefix + "/" + relativePath;
+                    string displayName = Path.GetFileName(relativePath);
 
                     try
                     {
-                        // Create old directory if it doesn't exist
-                        if (!Directory.Exists(oldDir))
+                        StatusLibrary.Log($"  Downloading {displayName}...");
+                        string result = await DownloadFile(cts, downloadUrl, localRelativePath);
+                        if (string.IsNullOrEmpty(result))
                         {
-                            Directory.CreateDirectory(oldDir);
+                            string localPath = Path.Combine(basePath, localRelativePath);
+                            if (File.Exists(localPath))
+                            {
+                                var fileInfo = new FileInfo(localPath);
+                                totalBytes += fileInfo.Length;
+                            }
+                            totalFilesDownloaded++;
+                            StatusLibrary.Log($"    {displayName} updated");
                         }
-
-                        string destPath = Path.Combine(oldDir, fileName);
-
-                        // If file already exists in old/, overwrite it
-                        if (File.Exists(destPath))
+                        else
                         {
-                            File.Delete(destPath);
+                            StatusLibrary.Log($"    Failed: {result}");
                         }
-
-                        File.Move(filePath, destPath);
-                        StatusLibrary.Log($"  Moved {fileName} to old/");
-                        movedCount++;
                     }
                     catch (Exception ex)
                     {
-                        StatusLibrary.Log($"  Failed to move {fileName}: {ex.Message}");
+                        StatusLibrary.Log($"    Failed to download {displayName}: {ex.Message}");
                     }
-                }
-            }
 
-            if (movedCount == 0)
-            {
-                StatusLibrary.Log("  No storyline files to clean up.");
-            }
-            else
-            {
-                StatusLibrary.Log($"  Moved {movedCount} storyline file(s) to old/ folder.");
+                    downloadIndex++;
+                    // Progress: 30-100% for downloading
+                    StatusLibrary.SetProgress(3000 + (int)((downloadIndex / (double)downloadQueue.Count) * 7000));
+                }
             }
 
             StatusLibrary.SetProgress(10000);
@@ -746,24 +729,16 @@ namespace EQEmu_Patcher
         }
     }
 
-    public class FileList
+    public class Manifest
     {
-        public string version { get; set; }
-
-        public List<FileEntry> deletes { get; set; }
-        public string downloadprefix { get; set; }
-        public List<FileEntry> downloads { get; set; }
-        public List<FileEntry> unpacks { get; set; }
-
+        public string filesUrlPrefix { get; set; }
+        public Dictionary<string, ManifestFile> files { get; set; }
     }
 
-    public class FileEntry
+    public class ManifestFile
     {
-        public string name { get; set;  }
-        public string md5 { get; set; }
-        public string date { get; set; }
-        public string zip { get; set; }
         public int size { get; set; }
+        public string hash { get; set; }
     }
 
 }
