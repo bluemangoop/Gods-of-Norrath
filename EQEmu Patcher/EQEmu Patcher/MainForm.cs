@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -610,6 +611,44 @@ namespace EQEmu_Patcher
             StatusLibrary.Log($"  {skipped} files up to date, {downloadQueue.Count} files need download.");
 
             // ============================================
+            // PHASE 2b: Compare archive entries against local
+            // ============================================
+            var archiveQueue = new List<KeyValuePair<string, ArchiveEntry>>();
+            if (manifest.archives != null)
+            {
+                foreach (var arch in manifest.archives)
+                {
+                    if (isPatchCancelled) { StatusLibrary.Log("Patching cancelled."); return; }
+
+                    string localArchive = Path.Combine(basePath, arch.Key);
+                    bool needsDownload = false;
+                    if (!File.Exists(localArchive))
+                    {
+                        needsDownload = true;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            string localHash = XXHash64.ComputeFileHash(localArchive);
+                            if (!localHash.Equals(arch.Value.hash, StringComparison.OrdinalIgnoreCase))
+                                needsDownload = true;
+                        }
+                        catch { needsDownload = true; }
+                    }
+
+                    if (needsDownload)
+                        archiveQueue.Add(arch);
+                    else
+                        StatusLibrary.Log($"  Archive {arch.Key} up to date.");
+                }
+            }
+
+            // Combine file + archive total for progress
+            int queueTotal = downloadQueue.Count + archiveQueue.Count;
+            int archiveIndex = 0;
+
+            // ============================================
             // PHASE 3: Download queued files
             // ============================================
             if (downloadQueue.Count > 0)
@@ -659,8 +698,60 @@ namespace EQEmu_Patcher
                     }
 
                     downloadIndex++;
-                    // Progress: 30-100% for downloading
-                    StatusLibrary.SetProgress(3000 + (int)((downloadIndex / (double)downloadQueue.Count) * 7000));
+                    // Progress: 30-85% for downloading files + archives
+                    StatusLibrary.SetProgress(3000 + (int)((downloadIndex / (double)queueTotal) * 5500));
+                }
+            }
+
+            // ============================================
+            // PHASE 4: Download and extract archive files
+            // ============================================
+            if (archiveQueue.Count > 0)
+            {
+                StatusLibrary.Log("");
+                StatusLibrary.Log($"Downloading {archiveQueue.Count} archive(s)...");
+                int archivePos = 0;
+
+                foreach (var arch in archiveQueue)
+                {
+                    if (isPatchCancelled) { StatusLibrary.Log("Patching cancelled."); return; }
+
+                    string archName = arch.Key;
+                    string archUrl = manifest.filesUrlPrefix + "/" + archName;
+                    var archEntry = arch.Value;
+
+                    try
+                    {
+                        StatusLibrary.Log($"  Downloading {archName} ({generateSize(archEntry.size)})...");
+                        string result = await DownloadFile(cts, archUrl, archName);
+                        if (string.IsNullOrEmpty(result))
+                        {
+                            string localArchive = Path.Combine(basePath, archName);
+                            if (File.Exists(localArchive))
+                            {
+                                string extractDir = Path.Combine(basePath, archEntry.extractTo.Replace("/", "\\"));
+                                StatusLibrary.Log($"  Extracting to {archEntry.extractTo}...");
+                                Directory.CreateDirectory(extractDir);
+                                ZipFile.ExtractToDirectory(localArchive, extractDir);
+                                File.Delete(localArchive);
+                                totalFilesDownloaded++;
+                                StatusLibrary.Log($"  {archName} extracted and deleted.");
+                            }
+                        }
+                        else
+                        {
+                            StatusLibrary.Log($"    Failed: {result}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        StatusLibrary.Log($"    Failed to process {archName}: {ex.Message}");
+                    }
+
+                    archivePos++;
+                    archiveIndex++;
+                    int totalProgress = downloadQueue.Count + archivePos;
+                    StatusLibrary.SetProgress(3000 + (int)((totalProgress / (double)queueTotal) * 5500));
                 }
             }
 
@@ -733,12 +824,20 @@ namespace EQEmu_Patcher
     {
         public string filesUrlPrefix { get; set; }
         public Dictionary<string, ManifestFile> files { get; set; }
+        public Dictionary<string, ArchiveEntry> archives { get; set; }
     }
 
     public class ManifestFile
     {
         public int size { get; set; }
         public string hash { get; set; }
+    }
+
+    public class ArchiveEntry
+    {
+        public int size { get; set; }
+        public string hash { get; set; }
+        public string extractTo { get; set; }
     }
 
 }
