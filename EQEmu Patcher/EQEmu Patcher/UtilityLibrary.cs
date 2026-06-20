@@ -623,6 +623,8 @@ namespace EQEmu_Patcher
                 { "3258 Rodcet Nife", "3258 Good"    },
                 { "1465 %1 tells you, 'Welcome to my bank!'",
                   "1465 While targeting a banker, type \"search <phrase>\" to find items for sale. Type \"sell <platinum amount>\" to list the item on your cursor for sale. Type \"list items\" to check your own listings." },
+                { "2259 Infected Paw",
+                  "2259 The Lair of Splitpaw" },
             };
 
             string[] lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
