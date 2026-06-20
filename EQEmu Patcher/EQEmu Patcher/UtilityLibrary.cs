@@ -621,6 +621,8 @@ namespace EQEmu_Patcher
                 { "3250 Agnostic",   "3250 Neutral" },
                 { "3254 Innoruuk",    "3254 Evil"    },
                 { "3258 Rodcet Nife", "3258 Good"    },
+                { "1465 %1 tells you, 'Welcome to my bank!'",
+                  "1465 While targeting a banker, type \"search <phrase>\" to find items for sale. Type \"sell <platinum amount>\" to list the item on your cursor for sale. Type \"list items\" to check your own listings." },
             };
 
             string[] lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
